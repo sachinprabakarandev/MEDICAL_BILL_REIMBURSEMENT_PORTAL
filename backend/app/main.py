@@ -56,7 +56,7 @@ def login_page(request: Request):
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
     context = get_template_context(request)
     context["error"] = None
-    return templates.TemplateResponse("login.html", context)
+    return templates.TemplateResponse(request, "login.html", context)
 
 @app.post("/auth/login")
 def login(request: Request, username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
@@ -64,7 +64,7 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
     if not user or not verify_password(password, user.hashed_password):
         context = get_template_context(request)
         context["error"] = "Invalid username or password"
-        return templates.TemplateResponse("login.html", context)
+        return templates.TemplateResponse(request, "login.html", context)
         
     access_token = create_access_token(data={"sub": user.username})
     response = RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
@@ -110,7 +110,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     if user.role == "employee":
         ctx = get_template_context(request)
         ctx["active_page"] = "dashboard"
-        return templates.TemplateResponse("claim_verification.html", ctx)
+        return templates.TemplateResponse(request, "claim_verification.html", ctx)
         
     if user.role == "reviewer" or user.role == "admin":
         claims = db.query(Claim).order_by(Claim.date_submitted.desc()).all()
@@ -140,7 +140,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     context["claims"] = claims
     context["stats"] = stats
     context["active_page"] = "dashboard"
-    return templates.TemplateResponse("dashboard.html", context)
+    return templates.TemplateResponse(request, "dashboard.html", context)
 
 # ----------------------------------------------------
 # SUBMIT CLAIM
@@ -152,7 +152,7 @@ def submit_claim_page(request: Request):
         return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
     ctx = get_template_context(request)
     ctx["active_page"] = "submit"
-    return templates.TemplateResponse("submit_claim.html", ctx)
+    return templates.TemplateResponse(request, "submit_claim.html", ctx)
 
 @app.get("/iocl-verification", response_class=HTMLResponse)
 def iocl_verification_page(request: Request):
@@ -161,7 +161,7 @@ def iocl_verification_page(request: Request):
         return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
     ctx = get_template_context(request)
     ctx["active_page"] = "iocl-verification"
-    return templates.TemplateResponse("claim_verification.html", ctx)
+    return templates.TemplateResponse(request, "claim_verification.html", ctx)
 
 @app.post("/claims/submit")
 async def submit_claim(
@@ -394,7 +394,7 @@ def review_claim(claim_id: int, request: Request, db: Session = Depends(get_db))
     context["comments"] = comments
     context["active_page"] = ""
     
-    return templates.TemplateResponse("review_claim.html", context)
+    return templates.TemplateResponse(request, "review_claim.html", context)
 
 @app.post("/claims/{claim_id}/decide")
 def decide_claim(
@@ -457,7 +457,7 @@ def manage_drugs(request: Request, db: Session = Depends(get_db)):
     context["drugs"] = drugs
     context["brands"] = brands
     context["active_page"] = "drugs"
-    return templates.TemplateResponse("admin_drugs.html", context)
+    return templates.TemplateResponse(request, "admin_drugs.html", context)
 
 @app.post("/admin/drugs/add")
 def add_drug(generic_name: str = Form(...), drug_category: str = Form(...), notes: Optional[str] = Form(""), request: Request = None, db: Session = Depends(get_db)):
@@ -512,7 +512,7 @@ def audit_logs(request: Request, db: Session = Depends(get_db)):
     context = get_template_context(request)
     context["logs"] = logs
     context["active_page"] = "audit"
-    return templates.TemplateResponse("audit_logs.html", context)
+    return templates.TemplateResponse(request, "audit_logs.html", context)
 
 # ----------------------------------------------------
 # REPORT EXPORTING

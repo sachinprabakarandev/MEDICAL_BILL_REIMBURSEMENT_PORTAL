@@ -3,6 +3,10 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Tex
 from sqlalchemy.orm import relationship
 from app.database import Base
 
+def utcnow():
+    """Naive UTC timestamp (replacement for deprecated datetime.utcnow)."""
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
 class User(Base):
     __tablename__ = "users"
     
@@ -13,7 +17,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     role = Column(String, default="employee")  # employee, reviewer, admin
     department = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     
     claims = relationship("Claim", back_populates="user")
     audit_logs = relationship("AuditLog", back_populates="user")
@@ -23,7 +27,7 @@ class Claim(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    date_submitted = Column(DateTime, default=datetime.datetime.utcnow)
+    date_submitted = Column(DateTime, default=utcnow)
     status = Column(String, default="Pending")  # Pending, Approved, Rejected, Action Required
     total_claimed_amount = Column(Float, default=0.0)
     approved_amount = Column(Float, default=0.0)
@@ -48,7 +52,7 @@ class UploadedFile(Base):
     filepath = Column(String, nullable=False)
     file_type = Column(String, nullable=False)  # prescription, bill, other
     content_type = Column(String, nullable=False)
-    uploaded_at = Column(DateTime, default=datetime.datetime.utcnow)
+    uploaded_at = Column(DateTime, default=utcnow)
     
     claim = relationship("Claim", back_populates="uploaded_files")
     ocr_results = relationship("OCRResult", back_populates="file", cascade="all, delete-orphan")
@@ -63,7 +67,7 @@ class OCRResult(Base):
     raw_text = Column(Text, nullable=True)
     confidence_metrics = Column(Text, nullable=True)  # JSON string of confidence details
     status = Column(String, default="Success")  # Success, Fail
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     
     file = relationship("UploadedFile", back_populates="ocr_results")
 
@@ -142,7 +146,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utcnow)
     action_type = Column(String, nullable=False)  # Login, Submit, AI_Validation, Override, Export
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     claim_id = Column(Integer, ForeignKey("claims.id"), nullable=True)
@@ -159,6 +163,6 @@ class ReviewerComment(Base):
     claim_id = Column(Integer, ForeignKey("claims.id"), nullable=False)
     reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     comment = Column(Text, nullable=False)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utcnow)
     
     claim = relationship("Claim", back_populates="reviewer_comments")

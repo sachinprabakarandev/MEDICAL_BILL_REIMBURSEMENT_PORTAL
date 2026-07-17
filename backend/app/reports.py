@@ -164,11 +164,17 @@ def generate_excel_report(claim_data: dict, validation_results: list) -> io.Byte
     # Adjust column widths dynamically
     for col in ws.columns:
         max_len = 0
-        col_letter = col[0].column_letter
+        col_letter = None
         for cell in col:
+            # Cells from merged ranges (e.g. the title banner) have no column_letter — skip them
+            if not hasattr(cell, "column_letter"):
+                continue
+            if col_letter is None:
+                col_letter = cell.column_letter
             if cell.value:
                 max_len = max(max_len, len(str(cell.value)))
-        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+        if col_letter:
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
         
     file_stream = io.BytesIO()
     wb.save(file_stream)

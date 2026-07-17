@@ -1,5 +1,6 @@
 import datetime
 import hashlib
+import os
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
@@ -8,7 +9,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 
-SECRET_KEY = "iocl_medical_claims_jwt_secret_key"
+# Read from environment in production; the fallback is for local development only.
+SECRET_KEY = os.environ.get("IOCL_JWT_SECRET", "iocl_medical_claims_jwt_secret_key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
@@ -23,9 +25,9 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.datetime.utcnow() + expires_delta
+        expire = datetime.datetime.now(datetime.timezone.utc) + expires_delta
     else:
-        expire = datetime.datetime.utcnow() + datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt

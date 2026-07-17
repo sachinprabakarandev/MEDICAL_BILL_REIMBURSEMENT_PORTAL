@@ -1,7 +1,11 @@
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.models import Claim, PrescriptionMedicine, BillMedicine
+
+def _utcnow():
+    """Naive UTC timestamp (replacement for deprecated datetime.utcnow)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 def evaluate_rules(db: Session, claim: Claim, matches: list) -> list:
     """
@@ -84,8 +88,8 @@ def evaluate_rules(db: Session, claim: Claim, matches: list) -> list:
             for prev_claim in existing_claims:
                 # Check if this medicine was already approved in another claim recently (e.g., last 15 days)
                 # For simplicity, we just flag it if there is a match
-                claim_date = claim.date_submitted or datetime.utcnow()
-                prev_date = prev_claim.date_submitted or datetime.utcnow()
+                claim_date = claim.date_submitted or _utcnow()
+                prev_date = prev_claim.date_submitted or _utcnow()
                 days_diff = (claim_date - prev_date).days
                 if days_diff <= 15:
                     prev_medicines = [m.normalized_name for m in prev_claim.bill_medicines]
