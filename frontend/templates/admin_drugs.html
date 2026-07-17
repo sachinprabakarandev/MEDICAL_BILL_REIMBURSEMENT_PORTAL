@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Drug Intelligence DB — IOCL MediClaim{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;">
+    <div>
+        <h1>Drug Intelligence Database</h1>
+        <p class="page-subtitle">Manage generic names, brand mappings, synonym tables, and non-medical classification rules.</p>
+    </div>
+    <div style="display:flex;gap:8px;">
+        <button class="btn-primary" style="font-size:0.78rem;padding:8px 16px;" onclick="document.getElementById('addDrugModal').style.display='flex'">
+            <i class="bi bi-plus-lg"></i> Add Generic
+        </button>
+        <button class="btn-ghost" style="font-size:0.78rem;padding:8px 16px;" onclick="document.getElementById('addBrandModal').style.display='flex'">
+            <i class="bi bi-plus-lg"></i> Add Brand Map
+        </button>
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:7fr 5fr;gap:20px;">
+    <div class="glass">
+        <div class="glass-header"><h3><i class="bi bi-capsule"></i> Drug Master (Generics)</h3></div>
+        <div class="glass-body" style="padding:12px 20px 20px;">
+            <table class="tbl" style="border-spacing:0 4px;">
+                <thead><tr>
+                    <th style="padding:6px 10px;">ID</th>
+                    <th style="padding:6px 10px;">Generic Name</th>
+                    <th style="padding:6px 10px;">Category</th>
+                </tr></thead>
+                <tbody>
+                {% for d in drugs %}
+                <tr>
+                    <td style="padding:8px 10px;font-size:0.78rem;color:var(--text-dim);">#{{ d.id }}</td>
+                    <td style="padding:8px 10px;font-weight:600;color:var(--text-white);font-size:0.82rem;">{{ d.generic_name }}</td>
+                    <td style="padding:8px 10px;">
+                        {% if 'Non-Reimbursable' in d.drug_category %}
+                        <span class="badge-status badge-excluded">{{ d.drug_category }}</span>
+                        {% else %}
+                        <span class="badge-status" style="background:rgba(39,76,119,0.15);color:var(--navy-500);border:1px solid rgba(39,76,119,0.3);">{{ d.drug_category }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="glass">
+        <div class="glass-header"><h3><i class="bi bi-arrow-left-right"></i> Brand → Generic Mappings</h3></div>
+        <div class="glass-body" style="padding:12px 20px 20px;">
+            <table class="tbl" style="border-spacing:0 4px;">
+                <thead><tr>
+                    <th style="padding:6px 10px;">Brand Name</th>
+                    <th style="padding:6px 10px;">Drug ID</th>
+                    <th style="padding:6px 10px;">Strength</th>
+                </tr></thead>
+                <tbody>
+                {% for b in brands %}
+                <tr>
+                    <td style="padding:8px 10px;font-weight:600;color:var(--amber-400);font-size:0.82rem;">{{ b.brand_name }}</td>
+                    <td style="padding:8px 10px;font-size:0.78rem;color:var(--text-dim);">#{{ b.drug_id }}</td>
+                    <td style="padding:8px 10px;font-size:0.8rem;">{{ b.strength_standardized or 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ADD DRUG MODAL -->
+<div id="addDrugModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center;">
+    <div class="glass" style="width:420px;max-width:90vw;">
+        <div class="glass-header">
+            <h3>Add Generic Drug</h3>
+            <button onclick="this.closest('[id]').style.display='none'" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:1.2rem;"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="glass-body">
+            <form action="/admin/drugs/add" method="POST">
+                <div style="margin-bottom:14px;">
+                    <label class="form-label">Generic Name</label>
+                    <input type="text" class="form-input" name="generic_name" required placeholder="e.g. Ibuprofen">
+                </div>
+                <div style="margin-bottom:14px;">
+                    <label class="form-label">Category</label>
+                    <select class="form-input" name="drug_category">
+                        <option value="Analgesic">Analgesic</option>
+                        <option value="Antibiotic">Antibiotic</option>
+                        <option value="Supplements">Supplements</option>
+                        <option value="Cardiovascular">Cardiovascular</option>
+                        <option value="Antidiabetic">Antidiabetic</option>
+                        <option value="Non-Reimbursable (Cosmetic)">Non-Reimbursable (Cosmetic)</option>
+                        <option value="Non-Reimbursable (Nutritional)">Non-Reimbursable (Nutritional)</option>
+                        <option value="Non-Reimbursable (Food)">Non-Reimbursable (Food)</option>
+                    </select>
+                </div>
+                <div style="margin-bottom:14px;">
+                    <label class="form-label">Notes</label>
+                    <input type="text" class="form-input" name="notes" placeholder="Usage guidelines...">
+                </div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button type="button" class="btn-ghost" onclick="this.closest('[id]').style.display='none'">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Drug</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ADD BRAND MODAL -->
+<div id="addBrandModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center;">
+    <div class="glass" style="width:420px;max-width:90vw;">
+        <div class="glass-header">
+            <h3>Add Brand Mapping</h3>
+            <button onclick="this.closest('[id]').style.display='none'" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:1.2rem;"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="glass-body">
+            <form action="/admin/brands/add" method="POST">
+                <div style="margin-bottom:14px;">
+                    <label class="form-label">Brand Name</label>
+                    <input type="text" class="form-input" name="brand_name" required placeholder="e.g. Advil">
+                </div>
+                <div style="margin-bottom:14px;">
+                    <label class="form-label">Map to Generic Drug</label>
+                    <select class="form-input" name="drug_id" required>
+                        {% for d in drugs %}
+                        <option value="{{ d.id }}">{{ d.generic_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div style="margin-bottom:14px;">
+                    <label class="form-label">Standardized Strength</label>
+                    <input type="text" class="form-input" name="strength_standardized" placeholder="e.g. 200 mg">
+                </div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button type="button" class="btn-ghost" onclick="this.closest('[id]').style.display='none'">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Brand</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

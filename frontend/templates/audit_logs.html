@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Audit Trail — IOCL MediClaim{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>System Audit Trail</h1>
+    <p class="page-subtitle">Immutable log of all AI validation steps, user sign-ins, claim submissions, and reviewer overrides.</p>
+</div>
+
+<div class="glass">
+    <div class="glass-header"><h3><i class="bi bi-journal-text"></i> Audit Events</h3></div>
+    <div class="glass-body" style="padding:12px 24px 24px;">
+        {% if not logs %}
+        <div style="text-align:center;padding:48px 20px;">
+            <i class="bi bi-journal-x" style="font-size:2.8rem;color:var(--text-dim);opacity:0.4;"></i>
+            <p style="color:var(--text-muted);margin:12px 0;font-size:0.9rem;">No audit events recorded yet.</p>
+        </div>
+        {% else %}
+        <table class="tbl">
+            <thead><tr>
+                <th>Timestamp</th>
+                <th>Event</th>
+                <th>Actor</th>
+                <th>Claim</th>
+                <th>Details</th>
+            </tr></thead>
+            <tbody>
+            {% for log in logs %}
+            <tr>
+                <td style="color:var(--text-dim);font-size:0.78rem;white-space:nowrap;">{{ log.timestamp.strftime('%d %b %Y %H:%M:%S') }}</td>
+                <td>
+                    {% if 'Override' in log.action_type or 'Decide' in log.action_type %}
+                    <span class="badge-status badge-pending"><i class="bi bi-pencil-square"></i> Override</span>
+                    {% elif 'AI' in log.action_type or 'Validation' in log.action_type %}
+                    <span class="badge-status" style="background:rgba(99,102,241,0.08);color:#6366f1;border:1px solid rgba(99,102,241,0.25);"><i class="bi bi-cpu"></i> AI Audit</span>
+                    {% elif 'Submit' in log.action_type %}
+                    <span class="badge-status badge-approved"><i class="bi bi-plus-lg"></i> Submission</span>
+                    {% elif 'Login' in log.action_type or 'Logout' in log.action_type %}
+                    <span class="badge-status" style="background:rgba(255,255,255,0.03);color:var(--text-muted);border:1px solid var(--glass-border);"><i class="bi bi-door-open"></i> Auth</span>
+                    {% elif 'Export' in log.action_type %}
+                    <span class="badge-status" style="background:rgba(20,184,166,0.08);color:#14b8a6;border:1px solid rgba(20,184,166,0.25);"><i class="bi bi-download"></i> Export</span>
+                    {% else %}
+                    <span class="badge-status" style="background:rgba(255,255,255,0.03);color:var(--text-muted);border:1px solid var(--glass-border);"><i class="bi bi-activity"></i> {{ log.action_type }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if log.user %}
+                    <div style="font-weight:600;color:var(--text-white);font-size:0.82rem;">{{ log.user.full_name }}</div>
+                    <div style="font-size:0.68rem;color:var(--text-dim);text-transform:uppercase;">{{ log.user.role }}</div>
+                    {% else %}
+                    <span style="color:var(--text-dim);">System Engine</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if log.claim_id %}
+                    <a href="/claims/{{ log.claim_id }}/review" style="color:var(--amber-400);text-decoration:none;font-weight:600;">#{{ log.claim_id }}</a>
+                    {% else %}
+                    <span style="color:var(--text-dim);">—</span>
+                    {% endif %}
+                </td>
+                <td style="font-size:0.78rem;color:var(--text-muted);max-width:400px;">{{ log.description }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

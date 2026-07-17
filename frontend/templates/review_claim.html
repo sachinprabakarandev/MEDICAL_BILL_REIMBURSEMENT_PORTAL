@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% block title %}Claim #{{ claim.id }} Audit — IOCL MediClaim{% endblock %}
+
+{% block content %}
+<!-- BACK NAV -->
+<div style="margin-bottom:8px;">
+    <a href="/dashboard" style="color:var(--text-dim);text-decoration:none;font-size:0.8rem;display:inline-flex;align-items:center;gap:4px;">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+    </a>
+</div>
+
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;">
+    <div>
+        <h1>Claim #{{ claim.id }} — Verification Report</h1>
+        <p class="page-subtitle">Filed by {{ claim.user.full_name }} ({{ claim.user.department }}) on {{ claim.date_submitted.strftime('%d %b %Y, %H:%M') }}</p>
+    </div>
+    <div style="display:flex;gap:8px;">
+        <a href="/claims/{{ claim.id }}/export?format=pdf" class="btn-ghost" style="padding:7px 14px;font-size:0.78rem;"><i class="bi bi-file-pdf" style="color:var(--danger-400);"></i> PDF</a>
+        <a href="/claims/{{ claim.id }}/export?format=excel" class="btn-ghost" style="padding:7px 14px;font-size:0.78rem;"><i class="bi bi-file-earmark-excel" style="color:var(--success-400);"></i> Excel</a>
+        <a href="/claims/{{ claim.id }}/export?format=csv" class="btn-ghost" style="padding:7px 14px;font-size:0.78rem;"><i class="bi bi-filetype-csv"></i> CSV</a>
+    </div>
+</div>
+
+<!-- STATUS BANNER -->
+{% if claim.status == 'Approved' %}
+<div class="result-banner banner-approved">
+    <div class="banner-icon"><i class="bi bi-check-circle-fill"></i></div>
+    <div class="banner-text">
+        <h3 style="color:var(--success-400);">Verification Complete — Approved</h3>
+        <p>All prescribed medicines matched with pharmacy bill items. Eligible amount: <strong style="color:var(--success-400);">₹{{ "{:,.2f}".format(claim.approved_amount) }}</strong></p>
+    </div>
+</div>
+{% else %}
+<div class="result-banner banner-pending">
+    <div class="banner-icon"><i class="bi bi-exclamation-circle-fill"></i></div>
+    <div class="banner-text">
+        <h3 style="color:var(--warning-400);">Verification Complete — Requires Review</h3>
+        <p>Some items were flagged or excluded. Eligible amount: <strong style="color:var(--success-400);">₹{{ "{:,.2f}".format(claim.approved_amount) }}</strong> of ₹{{ "{:,.2f}".format(claim.total_claimed_amount) }} claimed.</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- SIDE-BY-SIDE: Prescription vs Bill -->
+<div class="comparison-grid">
+    <div class="glass">
+        <div class="glass-header">
+            <h3><i class="bi bi-file-earmark-medical"></i> Prescription (OCR Extracted)</h3>
+        </div>
+        <div class="glass-body" style="padding:16px 20px;">
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:0.8rem;margin-bottom:16px;">
+                <span style="color:var(--text-dim);font-weight:600;">Doctor:</span>
+                <span style="color:var(--text-white);">{{ prescription_meta.doctor_name or 'Dr. Unknown' }}</span>
+                <span style="color:var(--text-dim);font-weight:600;">Facility:</span>
+                <span style="color:var(--text-white);">{{ prescription_meta.hospital_name or 'N/A' }}</span>
+                <span style="color:var(--text-dim);font-weight:600;">Date:</span>
+                <span style="color:var(--text-white);">{{ prescription_meta.date or 'N/A' }}</span>
+            </div>
+            <table class="tbl" style="border-spacing:0 4px;">
+                <thead><tr>
+                    <th style="padding:6px 10px;">Medicine</th>
+                    <th style="padding:6px 10px;">Strength</th>
+                    <th style="padding:6px 10px;">Dosage</th>
+                    <th style="padding:6px 10px;text-align:right;">Qty</th>
+                </tr></thead>
+                <tbody>
+                {% for m in prescription_medicines %}
+                <tr>
+                    <td style="padding:8px 10px;font-weight:600;color:var(--text-white);font-size:0.82rem;">{{ m.medicine_name }}</td>
+                    <td style="padding:8px 10px;font-size:0.8rem;">{{ m.strength or 'N/A' }}</td>
+                    <td style="padding:8px 10px;font-size:0.8rem;">{{ m.dosage or 'N/A' }}</td>
+                    <td style="padding:8px 10px;text-align:right;font-weight:600;font-size:0.82rem;">{{ m.quantity or 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="glass">
+        <div class="glass-header">
+            <h3><i class="bi bi-receipt"></i> Pharmacy Invoice (OCR Extracted)</h3>
+        </div>
+        <div class="glass-body" style="padding:16px 20px;">
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:0.8rem;margin-bottom:16px;">
+                <span style="color:var(--text-dim);font-weight:600;">Store:</span>
+                <span style="color:var(--text-white);">{{ bill_meta.hospital_name or 'Pharmacy' }}</span>
+                <span style="color:var(--text-dim);font-weight:600;">Invoice #:</span>
+                <span style="color:var(--text-white);">{{ bill_meta.invoice_number or 'N/A' }}</span>
+                <span style="color:var(--text-dim);font-weight:600;">Date:</span>
+                <span style="color:var(--text-white);">{{ bill_meta.date or 'N/A' }}</span>
+            </div>
+            <table class="tbl" style="border-spacing:0 4px;">
+                <thead><tr>
+                    <th style="padding:6px 10px;">Item</th>
+                    <th style="padding:6px 10px;">Strength</th>
+                    <th style="padding:6px 10px;text-align:center;">Qty</th>
+                    <th style="padding:6px 10px;text-align:right;">Amount</th>
+                </tr></thead>
+                <tbody>
+                {% for m in bill_medicines %}
+                <tr>
+                    <td style="padding:8px 10px;font-weight:600;color:var(--text-white);font-size:0.82rem;">{{ m.medicine_name }}</td>
+                    <td style="padding:8px 10px;font-size:0.8rem;">{{ m.strength or 'N/A' }}</td>
+                    <td style="padding:8px 10px;text-align:center;font-size:0.82rem;">{{ m.quantity }}</td>
+                    <td style="padding:8px 10px;text-align:right;font-weight:600;color:var(--amber-400);font-size:0.82rem;">₹{{ "{:,.2f}".format(m.total_price) }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- MATCHED MEDICINES TABLE (Approved Lines) -->
+{% set approved_results = validation_results|selectattr('match_status', 'equalto', 'Approved')|list %}
+{% set pending_results = validation_results|selectattr('match_status', 'equalto', 'Pending Review')|list %}
+{% set rejected_results = validation_results|selectattr('match_status', 'equalto', 'Rejected')|list %}
+
+{% if approved_results or pending_results %}
+<div class="glass" style="margin-bottom:24px;">
+    <div class="glass-header">
+        <h3><i class="bi bi-check2-square"></i> Matched &amp; Eligible Medicines</h3>
+        <span style="font-size:0.75rem;color:var(--success-400);font-weight:600;">{{ approved_results|length + pending_results|length }} items</span>
+    </div>
+    <div class="glass-body" style="padding:12px 20px 20px;">
+        <table class="tbl">
+            <thead><tr>
+                <th>Prescribed Medicine</th>
+                <th>Billed Item (Brand)</th>
+                <th style="text-align:center;">Confidence</th>
+                <th>Status</th>
+                <th>AI Reasoning</th>
+            </tr></thead>
+            <tbody>
+            {% for r in approved_results + pending_results %}
+            <tr>
+                <td style="font-weight:600;color:var(--text-white);">{{ r.prescribed_name or '—' }}</td>
+                <td style="font-weight:600;color:var(--text-white);">{{ r.billed_name or '—' }}</td>
+                <td style="text-align:center;">
+                    <span style="font-weight:700;{% if r.match_score >= 95 %}color:var(--success-400){% elif r.match_score >= 80 %}color:var(--warning-400){% else %}color:var(--danger-400){% endif %}">
+                        {{ "{:.0f}%".format(r.match_score) }}
+                    </span>
+                </td>
+                <td>
+                    {% if r.match_status == 'Approved' %}
+                    <span class="badge-status badge-approved"><i class="bi bi-check-circle-fill"></i> Approved</span>
+                    {% else %}
+                    <span class="badge-status badge-pending"><i class="bi bi-exclamation-circle-fill"></i> Flagged</span>
+                    {% endif %}
+                </td>
+                <td style="font-size:0.78rem;color:var(--text-muted);max-width:280px;">{{ r.match_reason }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- EXCLUDED / REJECTED ITEMS -->
+{% if rejected_results %}
+<div class="excluded-callout">
+    <div class="callout-header">
+        <i class="bi bi-ban"></i>
+        <h4>Auto-Excluded Items ({{ rejected_results|length }})</h4>
+        <span style="font-size:0.75rem;color:var(--text-dim);margin-left:auto;">These items were automatically removed from the eligible total</span>
+    </div>
+    <table class="tbl" style="border-spacing:0 4px;">
+        <thead><tr>
+            <th style="padding:6px 10px;">Billed Item</th>
+            <th style="padding:6px 10px;">Exclusion Reason</th>
+            <th style="padding:6px 10px;text-align:right;">Amount Excluded</th>
+        </tr></thead>
+        <tbody>
+        {% for r in rejected_results %}
+        <tr>
+            <td style="padding:8px 10px;font-weight:600;color:var(--text-white);font-size:0.82rem;">{{ r.billed_name or r.prescribed_name or 'Unknown' }}</td>
+            <td style="padding:8px 10px;font-size:0.78rem;color:var(--danger-400);">{{ r.match_reason }}</td>
+            <td style="padding:8px 10px;text-align:right;font-weight:600;color:var(--danger-400);font-size:0.82rem;">
+                {% if r.billed_item_id %}—{% else %}—{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- FINANCIAL SUMMARY + REVIEWER ACTION -->
+<div style="display:grid;grid-template-columns:5fr 7fr;gap:20px;">
+    <!-- Financial Summary -->
+    <div class="glass">
+        <div class="glass-header"><h3><i class="bi bi-calculator"></i> Reimbursement Summary</h3></div>
+        <div class="glass-body">
+            <div style="display:grid;grid-template-columns:1fr auto;gap:8px 14px;font-size:0.85rem;">
+                <span style="color:var(--text-muted);">Total Claimed</span>
+                <span style="text-align:right;color:var(--text-white);font-weight:700;">₹{{ "{:,.2f}".format(claim.total_claimed_amount) }}</span>
+
+                <span style="color:var(--text-muted);">Eligible Amount</span>
+                <span style="text-align:right;color:var(--success-400);font-weight:800;font-size:1.1rem;">₹{{ "{:,.2f}".format(claim.approved_amount) }}</span>
+
+                <span style="color:var(--text-muted);">Excluded Amount</span>
+                <span style="text-align:right;color:var(--danger-400);font-weight:600;">₹{{ "{:,.2f}".format(claim.rejected_amount) }}</span>
+            </div>
+
+            <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--glass-border);">
+                <div style="font-size:0.78rem;color:var(--text-dim);">Claim Status</div>
+                <div style="margin-top:4px;">
+                    {% if claim.status == 'Approved' %}
+                    <span style="color:var(--success-400);font-weight:700;font-size:0.9rem;"><i class="bi bi-check-circle-fill"></i> APPROVED</span>
+                    {% elif claim.status == 'Rejected' %}
+                    <span style="color:var(--danger-400);font-weight:700;font-size:0.9rem;"><i class="bi bi-x-circle-fill"></i> REJECTED</span>
+                    {% else %}
+                    <span style="color:var(--warning-400);font-weight:700;font-size:0.9rem;"><i class="bi bi-hourglass-split"></i> PENDING REVIEW</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reviewer Decision Console -->
+    <div class="glass">
+        <div class="glass-header">
+            <h3>
+                {% if current_user.role == 'reviewer' and claim.status == 'Pending' %}
+                <i class="bi bi-pen"></i> Medical Officer Decision
+                {% else %}
+                <i class="bi bi-chat-left-text"></i> Review Comments
+                {% endif %}
+            </h3>
+        </div>
+        <div class="glass-body">
+            {% if comments %}
+            <div style="max-height:120px;overflow-y:auto;margin-bottom:16px;padding:10px 14px;background:rgba(255,255,255,0.02);border-radius:var(--radius-sm);border:1px solid var(--glass-border);">
+                {% for c in comments %}
+                <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--glass-border);">
+                    <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-dim);margin-bottom:4px;">
+                        <strong>Reviewer #{{ c.reviewer_id }}</strong>
+                        <span>{{ c.timestamp.strftime('%d %b %Y %H:%M') }}</span>
+                    </div>
+                    <p style="margin:0;font-size:0.82rem;color:var(--text-white);">{{ c.comment }}</p>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if current_user.role in ['reviewer','admin'] and claim.status == 'Pending' %}
+            <form action="/claims/{{ claim.id }}/decide" method="POST">
+                <div style="margin-bottom:14px;">
+                    <label class="form-label" for="comment">Auditor Remarks</label>
+                    <textarea class="form-input" id="comment" name="comment" rows="2" placeholder="Required for audit trail…" required style="resize:vertical;"></textarea>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <button type="submit" name="action" value="approve" class="btn-success" style="width:100%;display:flex;align-items:center;justify-content:center;gap:6px;font-size:0.82rem;">
+                        <i class="bi bi-check2-circle"></i> Approve (₹{{ "{:,.2f}".format(claim.approved_amount) }})
+                    </button>
+                    <button type="submit" name="action" value="reject" class="btn-danger" style="width:100%;display:flex;align-items:center;justify-content:center;gap:6px;font-size:0.82rem;">
+                        <i class="bi bi-x-circle"></i> Reject Claim
+                    </button>
+                </div>
+            </form>
+            {% elif claim.status != 'Pending' %}
+            <div style="text-align:center;padding:20px;color:var(--text-dim);font-size:0.82rem;background:rgba(255,255,255,0.02);border-radius:var(--radius-sm);border:1px solid var(--glass-border);">
+                <i class="bi bi-archive" style="font-size:1.4rem;display:block;margin-bottom:8px;opacity:0.4;"></i>
+                This claim has been resolved and archived. No further actions available.
+            </div>
+            {% else %}
+            <div style="text-align:center;padding:20px;color:var(--text-dim);font-size:0.82rem;">
+                <i class="bi bi-hourglass" style="font-size:1.4rem;display:block;margin-bottom:8px;opacity:0.4;"></i>
+                This claim is pending review by the Medical Officer.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- VALIDATION METHOD STATEMENT -->
+<div style="margin-top:24px;padding:16px 20px;border-radius:var(--radius-md);background:rgba(255,255,255,0.02);border:1px solid var(--glass-border);">
+    <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);font-weight:600;margin-bottom:8px;">Validation Method Statement</div>
+    <p style="font-size:0.78rem;color:var(--text-muted);line-height:1.7;margin:0;">
+        This verification was performed by the IOCL MediClaim AI Validation Engine v1.0. Documents were processed using OCR text extraction (pdfplumber + regex parser).
+        Medicine matching used the Drug Intelligence Database with brand-to-generic resolution, Levenshtein distance similarity, and token intersection algorithms.
+        Non-medical items were auto-excluded using category classification from DrugMaster (ID ≥ 100). Strength and quantity warnings were flagged using dosage frequency parsing (OD/BD/TDS/1-0-1 codes).
+        All decisions are logged in the system audit trail for compliance purposes.
+    </p>
+</div>
+{% endblock %}

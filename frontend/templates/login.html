@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Sign In — IOCL MediClaim{% endblock %}
+
+{% block public_content %}
+<div class="login-clean-bg">
+    <div class="login-clean-card">
+        <!-- Brand Header -->
+        <div class="iocl-brand-header">
+            <div class="iocl-logo-css">
+                <div class="iocl-logo-inner">
+                    <div class="iocl-logo-band">इंडियनऑयल</div>
+                </div>
+            </div>
+            <div class="iocl-brand-text">
+                <span class="iocl-brand-main">IndianOil</span>
+                <span class="iocl-brand-sub">Medical Reimbursement Portal</span>
+            </div>
+        </div>
+
+        <!-- Section Title -->
+        <div class="login-clean-section">EMPLOYEE SIGN IN</div>
+        <h2 class="login-clean-title">Access your account</h2>
+        <p class="login-clean-subtitle">Enter your employee ID and password to continue.</p>
+
+        {% if error %}
+        <div class="login-error-alert">
+            <i class="bi bi-exclamation-circle-fill"></i> {{ error }}
+        </div>
+        {% endif %}
+
+        <!-- Form -->
+        <form action="/auth/login" method="POST" id="loginForm">
+            <div class="login-clean-group">
+                <label class="login-clean-label" for="username">Employee ID</label>
+                <div class="login-clean-input-wrapper">
+                    <i class="bi bi-person login-clean-icon-left"></i>
+                    <input type="text" class="login-clean-input" id="username" name="username" placeholder="e.g. IOC-EMP-04821" required autocomplete="username">
+                </div>
+            </div>
+            
+            <div class="login-clean-group">
+                <label class="login-clean-label" for="password">Password</label>
+                <div class="login-clean-input-wrapper">
+                    <i class="bi bi-lock login-clean-icon-left"></i>
+                    <input type="password" class="login-clean-input" id="password" name="password" placeholder="Enter your password" required autocomplete="current-password">
+                    <i class="bi bi-eye login-clean-icon-right" id="togglePassword" onclick="togglePass()"></i>
+                </div>
+            </div>
+
+            <button type="submit" class="login-clean-btn">
+                Sign in to Portal <i class="bi bi-arrow-right" style="margin-left: 4px;"></i>
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function togglePass() {
+    const passwordInput = document.getElementById('password');
+    const toggleIcon = document.getElementById('togglePassword');
+    if (passwordInput.type === 'password') {
+        passwordInput.type = 'text';
+        toggleIcon.classList.replace('bi-eye', 'bi-eye-slash');
+    } else {
+        passwordInput.type = 'password';
+        toggleIcon.classList.replace('bi-eye-slash', 'bi-eye');
+    }
+}
+</script>
+{% endblock %}

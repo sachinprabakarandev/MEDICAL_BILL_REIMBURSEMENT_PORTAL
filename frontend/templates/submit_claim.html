@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Submit Claim — IOCL MediClaim{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Submit Medical Claim</h1>
+    <p class="page-subtitle">Upload your prescription and pharmacy invoice. The AI engine will automatically verify, match, and calculate eligible reimbursement.</p>
+</div>
+
+<!-- STAGE 1: UPLOAD -->
+<div id="stage-upload">
+    <!-- Demo Presets -->
+    <div class="glass" style="margin-bottom:24px;border-color:rgba(212,160,23,0.15);">
+        <div class="glass-body" style="padding:20px 24px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+                <i class="bi bi-lightning-charge-fill" style="color:var(--amber-400);font-size:1.1rem;"></i>
+                <h3 style="margin:0;font-size:0.9rem;font-weight:700;color:var(--text-white);">Quick Demo Scenarios</h3>
+                <span style="font-size:0.72rem;color:var(--text-dim);margin-left:auto;">No sample files needed</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+                <div class="preset-card" id="preset-success" onclick="selectPreset('success')" style="cursor:pointer;padding:16px;border-radius:var(--radius-md);border:1px solid var(--glass-border);background:rgba(255,255,255,0.015);transition:var(--transition);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <span class="badge-status badge-approved" style="font-size:0.68rem;">Scenario 1</span>
+                        <span style="font-size:0.7rem;color:var(--text-dim);">Full Approval</span>
+                    </div>
+                    <div style="font-weight:700;font-size:0.85rem;color:var(--text-white);margin-bottom:4px;">Generic ↔ Brand Match</div>
+                    <div style="font-size:0.75rem;color:var(--text-dim);line-height:1.5;">Paracetamol→Dolo, Pantoprazole→Pantocid, Amoxicillin+Clavulanate→Augmentin</div>
+                </div>
+                <div class="preset-card" id="preset-warning" onclick="selectPreset('warning')" style="cursor:pointer;padding:16px;border-radius:var(--radius-md);border:1px solid var(--glass-border);background:rgba(255,255,255,0.015);transition:var(--transition);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <span class="badge-status badge-pending" style="font-size:0.68rem;">Scenario 2</span>
+                        <span style="font-size:0.7rem;color:var(--text-dim);">Mixed Result</span>
+                    </div>
+                    <div style="font-weight:700;font-size:0.85rem;color:var(--text-white);margin-bottom:4px;">Warnings &amp; Auto-Exclusions</div>
+                    <div style="font-size:0.75rem;color:var(--text-dim);line-height:1.5;">Strength mismatch, excess quantity, plus Pears Soap &amp; Horlicks auto-excluded</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <form id="claimForm" action="/claims/submit" method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="demo_preset" id="demo_preset" value="">
+
+        <div class="glass" style="margin-bottom:24px;">
+            <div class="glass-body">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
+                    <div>
+                        <label class="form-label">Doctor's Prescription</label>
+                        <div class="dropzone" id="dz-presc" onclick="document.getElementById('prescription_file').click()">
+                            <div class="dz-icon"><i class="bi bi-file-earmark-medical"></i></div>
+                            <div class="dz-title" id="dz-presc-title">Choose file or drop here</div>
+                            <div class="dz-sub" id="dz-presc-sub">PDF, JPEG, PNG, TIFF (Max 10MB)</div>
+                            <input type="file" name="prescription_file" id="prescription_file" accept=".pdf,.png,.jpg,.jpeg,.heic,.tiff" style="display:none" onchange="onFileSelect(this,'presc')">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="form-label">Pharmacy Invoice / Bill</label>
+                        <div class="dropzone" id="dz-bill" onclick="document.getElementById('bill_file').click()">
+                            <div class="dz-icon"><i class="bi bi-receipt"></i></div>
+                            <div class="dz-title" id="dz-bill-title">Choose file or drop here</div>
+                            <div class="dz-sub" id="dz-bill-sub">PDF, JPEG, PNG, TIFF (Max 10MB)</div>
+                            <input type="file" name="bill_file" id="bill_file" accept=".pdf,.png,.jpg,.jpeg,.heic,.tiff" style="display:none" onchange="onFileSelect(this,'bill')">
+                        </div>
+                    </div>
+                </div>
+
+                <input type="hidden" id="claimed_amount" name="claimed_amount" value="0.00">
+                <input type="hidden" id="notes" name="notes" value="Automated AI Claim Verification">
+            </div>
+        </div>
+
+        <div style="display:flex;gap:12px;justify-content:flex-end;">
+            <a href="/dashboard" class="btn-ghost">Cancel</a>
+            <button type="submit" class="btn-primary" id="submitBtn" onclick="showProcessing(event)">
+                <i class="bi bi-cpu"></i> Run AI Verification
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- STAGE 2: PROCESSING TICKER (shown via JS during submit) -->
+<div class="ticker-container" id="stage-processing">
+    <div class="glass">
+        <div class="glass-header"><h3><i class="bi bi-cpu"></i> Automated Verification in Progress</h3></div>
+        <div class="glass-body">
+            <div class="ticker-step active" id="ts-1">
+                <div class="step-dot"><i class="bi bi-upload"></i></div>
+                <div class="step-label">Uploading documents…</div>
+            </div>
+            <div class="ticker-step" id="ts-2">
+                <div class="step-dot"><i class="bi bi-eye"></i></div>
+                <div class="step-label">Running OCR text extraction on prescription &amp; invoice…</div>
+            </div>
+            <div class="ticker-step" id="ts-3">
+                <div class="step-dot"><i class="bi bi-diagram-3"></i></div>
+                <div class="step-label">Resolving brand names → generic equivalents via Drug Intelligence DB…</div>
+            </div>
+            <div class="ticker-step" id="ts-4">
+                <div class="step-dot"><i class="bi bi-funnel"></i></div>
+                <div class="step-label">Filtering non-medical items (toiletries, food, cosmetics)…</div>
+            </div>
+            <div class="ticker-step" id="ts-5">
+                <div class="step-dot"><i class="bi bi-calculator"></i></div>
+                <div class="step-label">Calculating eligible reimbursement total…</div>
+            </div>
+            <div class="ticker-step" id="ts-6">
+                <div class="step-dot"><i class="bi bi-check-lg"></i></div>
+                <div class="step-label">Generating audit report — redirecting to results…</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onFileSelect(input, type) {
+    const f = input.files[0];
+    if (!f) return;
+    document.getElementById('dz-'+type+'-title').textContent = f.name;
+    document.getElementById('dz-'+type+'-sub').textContent = (f.size/1024/1024).toFixed(2)+' MB';
+    document.getElementById('dz-'+type).classList.add('uploaded');
+    document.getElementById('demo_preset').value = '';
+    document.querySelectorAll('.preset-card').forEach(c => { c.style.borderColor=''; c.style.background=''; });
+}
+
+function selectPreset(s) {
+    document.getElementById('demo_preset').value = s;
+    document.querySelectorAll('.preset-card').forEach(c => { c.style.borderColor=''; c.style.background=''; });
+    const el = document.getElementById('preset-'+s);
+    el.style.borderColor = s==='success' ? 'var(--success-400)' : 'var(--warning-400)';
+    el.style.background = s==='success' ? 'var(--success-bg)' : 'var(--warning-bg)';
+
+    document.getElementById('claimed_amount').value = s==='success' ? '920.00' : '1850.00';
+    document.getElementById('notes').value = s==='success'
+        ? 'Demo: Generic-to-brand matching (full approval)'
+        : 'Demo: Strength mismatch + non-medical auto-exclusions';
+
+    ['presc','bill'].forEach(t => {
+        document.getElementById('dz-'+t).classList.add('uploaded');
+        document.getElementById('dz-'+t+'-title').textContent = s+'_'+t+'_sample.pdf';
+        document.getElementById('dz-'+t+'-sub').textContent = 'Preseeded demo file';
+    });
+}
+
+function showProcessing(event) {
+    const form = document.getElementById('claimForm');
+    
+    // Check if the form is valid using HTML5 validation
+    if (!form.checkValidity()) {
+        return;
+    }
+    
+    const demoPreset = document.getElementById('demo_preset').value;
+    const prescFile = document.getElementById('prescription_file').files[0];
+    const billFile = document.getElementById('bill_file').files[0];
+    
+    if (!demoPreset && (!prescFile || !billFile)) {
+        alert("Please upload both a Doctor's Prescription and a Pharmacy Bill to run verification.");
+        event.preventDefault();
+        return;
+    }
+    
+    // Prevent immediate submission to allow ticker to show
+    event.preventDefault();
+    
+    // Hide form, show ticker
+    document.getElementById('stage-upload').style.display = 'none';
+    const proc = document.getElementById('stage-processing');
+    proc.classList.add('visible');
+
+    const steps = ['ts-1','ts-2','ts-3','ts-4','ts-5','ts-6'];
+    let i = 0;
+    const iv = setInterval(() => {
+        if (i > 0) document.getElementById(steps[i-1]).classList.replace('active','done');
+        if (i < steps.length) {
+            document.getElementById(steps[i]).classList.add('active');
+        } else {
+            clearInterval(iv);
+            // Submit form now
+            form.submit();
+        }
+        i++;
+    }, 400);
+}
+</script>
+{% endblock %}
