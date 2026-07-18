@@ -442,6 +442,127 @@ def decide_claim(
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
 
 # ----------------------------------------------------
+# REAL-TIME VERIFICATION API (USED BY FRONTEND)
+# ----------------------------------------------------
+@app.post("/api/verify")
+async def verify_claim_api(
+    prescription_file: UploadFile = File(...),
+    bill_file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    import tempfile
+    import shutil
+    import random
+    from app.ocr_engine import process_and_extract_document
+    from app.intelligence import match_prescription_and_bill, normalize_text
+    from app.rules import evaluate_rules
+    from app.models import Claim, PrescriptionMedicine, BillMedicine, User
+    from datetime import datetime, timezone
+    
+    # Get a dummy user to run rules (or the current user if available)
+    user = db.query(User).filter(User.role == "employee").first()
+    
+    # Write files to temp
+    presc_ext = os.path.splitext(prescription_file.filename)[1] or ".pdf"
+    bill_ext = os.path.splitext(bill_file.filename)[1] or ".pdf"
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=presc_ext) as tmp_presc:
+        shutil.copyfileobj(prescription_file.file, tmp_presc)
+        presc_path = tmp_presc.name
+        
+    with tempfile.NamedTemporaryFile(delete=False, suffix=bill_ext) as tmp_bill:
+        shutil.copyfileobj(bill_file.file, tmp_bill)
+        bill_path = tmp_bill.name
+        
+    try:
+        # OCR
+        presc_extracted = process_and_extract_document(presc_path, "prescription")
+        bill_extracted = process_and_extract_document(bill_path, "bill")
+        
+        # Build models
+        p_meds = []
+        for m in presc_extracted["parsed_data"]["medicines"]:
+            pm = PrescriptionMedicine(
+                medicine_name=m["medicine_name"],
+                strength=m.get("strength"),
+                dosage=m.get("dosage"),
+                frequency=m.get("frequency"),
+                duration_days=m.get("duration_days"),
+                quantity=m.get("quantity")
+            )
+            pm.normalized_name = normalize_text(pm.medicine_name)
+            p_meds.append(pm)
+            
+        b_meds = []
+        for m in bill_extracted["parsed_data"]["medicines"]:
+            bm = BillMedicine(
+                medicine_name=m["medicine_name"],
+                strength=m.get("strength"),
+                quantity=m.get("quantity"),
+                unit_price=m.get("unit_price", 0.0),
+                total_price=m.get("total_price", 0.0)
+            )
+            bm.normalized_name = normalize_text(bm.medicine_name)
+            b_meds.append(bm)
+            
+        # Match
+        matched_results = match_prescription_and_bill(db, p_meds, b_meds)
+        
+        # Run rules using an unpersisted claim object
+        temp_claim = Claim(
+            user_id=user.id if user else 1,
+            status="Pending",
+            total_claimed_amount=0.0,
+            date_submitted=datetime.now(timezone.utc).replace(tzinfo=None)
+        )
+        evaluated_results = evaluate_rules(db, temp_claim, matched_results)
+        
+        # Build response rows
+        rows = []
+        approved_sum = 0.0
+        rejected_sum = 0.0
+        
+        for item in evaluated_results:
+            pm = item["prescribed_item"]
+            bm = item["billed_item"]
+            status = item["match_status"]
+            reason = item["reason"]
+            
+            p_name = pm.medicine_name if pm else "— Not prescribed —"
+            b_name = bm.medicine_name if bm else "— Not purchased —"
+            
+            approved = (status == "Approved")
+            amount = bm.total_price if bm else 0.0
+            
+            if approved:
+                approved_sum += amount
+            else:
+                rejected_sum += amount
+                
+            rows.append({
+                "prescribed": p_name,
+                "billed": b_name,
+                "approved": approved,
+                "reason": reason,
+                "amount": amount
+            })
+            
+        random_id = f"CLM-2026-{random.randint(10000, 99999)}"
+        return {
+            "claimId": random_id,
+            "approvedAmount": approved_sum,
+            "rejectedAmount": rejected_sum,
+            "totalBilled": approved_sum + rejected_sum,
+            "rows": rows
+        }
+    finally:
+        try:
+            os.remove(presc_path)
+            os.remove(bill_path)
+        except Exception:
+            pass
+
+# ----------------------------------------------------
 # ADMIN & MANAGEMENT
 # ----------------------------------------------------
 @app.get("/admin/drugs", response_class=HTMLResponse)

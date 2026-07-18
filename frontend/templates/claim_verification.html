@@ -1340,7 +1340,10 @@
         let pdfAnalysisResult = { prescMeds: [], billedMeds: [], detectedName: "", detectedEmpId: "", MED_DETAILS: {} };
 
         async function startVerification() {
-            pdfAnalysisResult = await detectPdfKeywords();
+            if (uploadedFiles.prescription.length === 0 || uploadedFiles.bill.length === 0) {
+                alert("Please select both a doctor's prescription and a pharmacy bill first.");
+                return;
+            }
 
             // Update Stepper
             document.getElementById('step-1').className = 'step completed';
@@ -1353,6 +1356,25 @@
             document.getElementById('stage-2-view').classList.add('active');
 
             setProgress(0);
+
+            // Fetch backend results in parallel
+            let fetchError = null;
+            const formData = new FormData();
+            formData.append("prescription_file", uploadedFiles.prescription[0]);
+            formData.append("bill_file", uploadedFiles.bill[0]);
+
+            const fetchPromise = fetch("/api/verify", {
+                method: "POST",
+                body: formData
+            }).then(async (response) => {
+                if (!response.ok) {
+                    throw new Error("Backend verification failed");
+                }
+                return response.json();
+            }).catch((err) => {
+                console.error(err);
+                fetchError = err;
+            });
 
             // Run verification animation logic
             let currentCheck = 0;
@@ -1385,7 +1407,19 @@
                     }, 50);
                 } else {
                     // Complete verification, transition to results
-                    setTimeout(showResults, 400);
+                    fetchPromise.then((data) => {
+                        if (fetchError || !data) {
+                            console.warn("Falling back to prototype simulation due to backend error");
+                            detectPdfKeywords().then((keywords) => {
+                                pdfAnalysisResult = keywords;
+                                verificationResults = null;
+                                setTimeout(showResults, 400);
+                            });
+                        } else {
+                            verificationResults = data;
+                            setTimeout(showResults, 400);
+                        }
+                    });
                 }
             }
 
@@ -1513,8 +1547,10 @@
         }
 
         function showResults() {
-            // Calculate mock details
-            calculateMockResults();
+            // Calculate mock details only if not already set by API
+            if (!verificationResults || !verificationResults.rows) {
+                calculateMockResults();
+            }
 
             // Update Stepper
             document.getElementById('step-2').className = 'step completed';

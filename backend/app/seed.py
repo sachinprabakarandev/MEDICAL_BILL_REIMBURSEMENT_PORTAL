@@ -27,8 +27,8 @@ def seed_db():
                 User(
                     username="emp1",
                     hashed_password=get_password_hash("password123"),
-                    full_name="Rajesh Kumar",
-                    email="rajesh.kumar@iocl.in",
+                    full_name="Sachin",
+                    email="sachin@iocl.in",
                     role="employee",
                     department="Refineries division"
                 ),
@@ -76,6 +76,13 @@ def seed_db():
                 DrugMaster(id=6, generic_name="Metformin", drug_category="Antidiabetic", notes="First-line medication for type 2 diabetes."),
                 DrugMaster(id=7, generic_name="Montelukast + Levocetirizine", drug_category="Antihistamine/Antiasthmatic", notes="For allergic rhinitis and asthma control."),
                 DrugMaster(id=8, generic_name="Vitamin C", drug_category="Supplements", notes="Ascorbic acid booster."),
+                
+                # Case study specific drugs
+                DrugMaster(id=9, generic_name="Benzonatate", drug_category="Antitussive", notes="Cough suppressant. Do not chew capsule."),
+                DrugMaster(id=10, generic_name="Acebrophylline + Acetylcysteine", drug_category="Mucolytic/Bronchodilator", notes="For productive cough and airway clearance."),
+                DrugMaster(id=11, generic_name="Celecoxib", drug_category="NSAID (Analgesic)", notes="For pain and inflammatory relief."),
+                DrugMaster(id=12, generic_name="Enymeral Forte", drug_category="Analgesic/Anti-inflammatory", notes="Enzyme-based pain and swelling reliever."),
+                DrugMaster(id=13, generic_name="Diclofenac Spray", drug_category="Topical Analgesic", notes="For localized musculoskeletal pain relief."),
                 
                 # Non-medical rejections
                 DrugMaster(id=100, generic_name="Soap/Bodywash", drug_category="Non-Reimbursable (Cosmetic)", notes="Personal hygiene consumable. Automatically rejected."),
@@ -147,6 +154,15 @@ def seed_db():
                 # Vitamin C brands
                 DrugBrandMapping(drug_id=8, brand_name="Limcee", strength_standardized="500 mg"),
                 DrugBrandMapping(drug_id=8, brand_name="Celin", strength_standardized="500 mg"),
+                
+                # Case study specific brands
+                DrugBrandMapping(drug_id=9, brand_name="Benz Pearls", strength_standardized="100 mg"),
+                DrugBrandMapping(drug_id=9, brand_name="Benz Pearls 100mg Caps 10's", strength_standardized="100 mg"),
+                DrugBrandMapping(drug_id=10, brand_name="Pulmoclear", strength_standardized="100 mg + 600 mg"),
+                DrugBrandMapping(drug_id=10, brand_name="Pulmoclear Tab 15's", strength_standardized="100 mg + 600 mg"),
+                DrugBrandMapping(drug_id=11, brand_name="Celebrex", strength_standardized="200 mg"),
+                DrugBrandMapping(drug_id=12, brand_name="Enymeral Forte", strength_standardized="N/A"),
+                DrugBrandMapping(drug_id=13, brand_name="Volitra APS Spray", strength_standardized="N/A"),
                 
                 # Non-medical rejects (exact brands mapped for auto-detection)
                 DrugBrandMapping(drug_id=100, brand_name="Pears Soap", strength_standardized="N/A"),

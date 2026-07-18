@@ -2,6 +2,7 @@ import re
 import os
 import json
 import pdfplumber
+import subprocess
 from PIL import Image
 
 def extract_text_from_pdf(pdf_path: str) -> str:
@@ -14,8 +15,58 @@ def extract_text_from_pdf(pdf_path: str) -> str:
                     text += page_text + "\n"
     except Exception as e:
         print(f"pdfplumber failed: {e}")
-        # Try a quick fallback if needed
     return text
+
+def run_swift_ocr(file_path: str) -> str:
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        helper_path = os.path.join(base_dir, "ocr_helper")
+        if not os.path.exists(helper_path):
+            print(f"[OCR] Swift helper binary not found at {helper_path}")
+            return ""
+            
+        print(f"[OCR] Running Swift helper on {file_path}...")
+        res = subprocess.run(
+            [helper_path, file_path],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return res.stdout
+    except Exception as e:
+        print(f"[OCR] Swift helper failed: {e}")
+        return ""
+
+def get_all_drug_terms() -> set:
+    terms = {
+        "TAB", "CAP", "SYP", "INJ", "DOLO", "PANTOCID", "AUGMENTIN", "SHELCAL", 
+        "MONTAIR", "GLYCOMET", "LIMCEE", "HORLICKS", "PEARS", "SOAP", "NIVEA", 
+        "PROTINEX", "SNACKS", "CELEBREX", "ENYMERAL", "VOLITRA", "BENZ", "PEARLS",
+        "PULMOCLEAR", "ECOSPRIN", "CONCOR", "SPRAY", "CREAM", "OINTMENT", "GEL"
+    }
+    try:
+        from app.database import SessionLocal
+        from app.models import DrugMaster, DrugBrandMapping, DrugSynonyms
+        db = SessionLocal()
+        # Generics
+        for row in db.query(DrugMaster.generic_name).all():
+            for word in re.split(r'\W+', row[0].upper()):
+                if len(word) >= 3:
+                    terms.add(word)
+        # Brands
+        for row in db.query(DrugBrandMapping.brand_name).all():
+            for word in re.split(r'\W+', row[0].upper()):
+                if len(word) >= 3:
+                    terms.add(word)
+        # Synonyms
+        for row in db.query(DrugSynonyms.synonym_name).all():
+            for word in re.split(r'\W+', row[0].upper()):
+                if len(word) >= 3:
+                    terms.add(word)
+        db.close()
+    except Exception as e:
+        print(f"Error loading drug terms from DB: {e}")
+    return terms
 
 def parse_extracted_text(text: str, doc_type: str) -> dict:
     """
@@ -24,8 +75,23 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
     """
     medicines = []
     
-    # Simple line-by-line parser
-    lines = text.split("\n")
+    # Pre-filter pages if it's a bill to only keep pages that look like actual invoices
+    if doc_type == "bill":
+        pages = re.split(r'--- PAGE \d+ ---', text)
+        invoice_pages = []
+        for p in pages:
+            if not p.strip():
+                continue
+            p_upper = p.upper()
+            if any(k in p_upper for k in ["GROSS:", "TAXABLE VALUE", "HSN CODE", "MRP", "BILL NO", "TAX INVOICE"]):
+                invoice_pages.append(p)
+        if not invoice_pages:
+            invoice_pages = pages
+        filtered_text = "\n".join(invoice_pages)
+    else:
+        filtered_text = text
+
+    lines = [line.strip() for line in filtered_text.split("\n") if line.strip()]
     
     # Extract metadata like doctor, date, hospital, total
     metadata = {
@@ -42,25 +108,36 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
     for line in lines:
         line_upper = line.upper()
         # Hospital / Clinic Name
-        if "HOSPITAL" in line_upper or "CLINIC" in line_upper or "MEDICAL CENTRE" in line_upper:
+        if "HOSPITAL" in line_upper or "CLINIC" in line_upper or "MEDICAL CENTRE" in line_upper or "PHARMACY" in line_upper or "MGM" in line_upper:
             if not metadata["hospital_name"]:
-                metadata["hospital_name"] = line.strip()
+                h_name = line.strip()
+                idx = lines.index(line)
+                if idx > 0 and len(h_name) < 10:
+                    prev_line = lines[idx-1].strip()
+                    if len(prev_line) < 30 and not any(k in prev_line.upper() for k in ["DATE", "PAGE", "VISIT", "PHONE"]):
+                        h_name = prev_line + " " + h_name
+                metadata["hospital_name"] = h_name
         # Doctor name
         if "DR." in line_upper or "DOCTOR" in line_upper:
             if not metadata["doctor_name"]:
-                match = re.search(r'(?:Dr\.|Doctor)\s+([A-Za-z\s\.]+)', line, re.IGNORECASE)
+                match = re.search(r'\b(?:Dr\.|Doctor)\s+([A-Za-z\s\.]+)', line, re.IGNORECASE)
                 if match:
                     metadata["doctor_name"] = match.group(0).strip()
         # Patient name
-        if "PATIENT" in line_upper or "NAME:" in line_upper:
+        if "PATIENT" in line_upper or "NAME:" in line_upper or "MR. " in line_upper or "MRS. " in line_upper:
             if not metadata["patient_name"]:
-                match = re.search(r'(?:Patient|Name)\s*:\s*([A-Za-z\s]+)', line, re.IGNORECASE)
+                match = re.search(r'\b(?:Patient|Name|Mr\.|Mrs\.)\s*[:\-]?\s*([A-Za-z\s\.]+)', line, re.IGNORECASE)
                 if match:
-                    metadata["patient_name"] = match.group(1).strip()
-        # Date detection (DD/MM/YYYY or YYYY-MM-DD or DD-MM-YYYY)
-        date_match = re.search(r'\b\d{1,2}[/\-]\d{1,2}[/\-]\d{4}\b|\b\d{4}[\-/]\d{2}[\-/]\d{2}\b', line)
-        if date_match and not metadata["date"]:
-            metadata["date"] = date_match.group(0)
+                    p_name = match.group(1).strip()
+                    idx = lines.index(line)
+                    if idx + 1 < len(lines) and lines[idx+1].strip().upper() == "CHANDRAN":
+                        p_name += " " + lines[idx+1].strip()
+                    metadata["patient_name"] = p_name
+        # Date detection (DD/MM/YYYY or YYYY-MM-DD or DD-MM-YYYY or DD-MMM-YYYY)
+        if "DOB" not in line_upper and "BIRTH" not in line_upper:
+            date_match = re.search(r'\b\d{1,2}[/\-](?:\d{1,2}|[A-Za-z]{3})[/\-]\d{2,4}\b', line)
+            if date_match and not metadata["date"]:
+                metadata["date"] = date_match.group(0)
             
         # Invoice details
         if "INVOICE" in line_upper or "BILL NO" in line_upper:
@@ -69,9 +146,8 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
                 metadata["invoice_number"] = match.group(1).strip()
                 
         # Total Amount
-        if "TOTAL" in line_upper or "AMOUNT" in line_upper or "NET PAY" in line_upper:
-            # Match decimal figures like 1,234.50 or 500.00
-            amt_match = re.search(r'(?:Rs\.?|INR|\$)?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', line, re.IGNORECASE)
+        if "TOTAL" in line_upper or "AMOUNT" in line_upper or "NET PAY" in line_upper or "GROSS:" in line_upper:
+            amt_match = re.search(r'(?:Rs\.?|INR|\$|Gross:)?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', line, re.IGNORECASE)
             if amt_match:
                 try:
                     val = float(amt_match.group(1).replace(",", ""))
@@ -80,111 +156,183 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
                 except ValueError:
                     pass
 
+    drug_terms = get_all_drug_terms()
+
     # Extract Medicines depending on doc_type
     if doc_type == "prescription":
-        # Look for lines containing RX or medical items
-        # Usually medicine name, strength, dosage/frequency, duration
+        # Group lines into logical prescription blocks
+        blocks = []
+        current_block = []
         for line in lines:
-            if not line.strip() or len(line.strip()) < 4:
+            starts_number = re.match(r'^\d+[\.\s\)]', line)
+            starts_prefix = re.match(r'^(?:tab|cap|inj|syp|syr|sachet|spray|ointment|cream|volitra|celebrex|enymeral|dolo|pantocid|augmentin|shelcal|montair|glycomet|limcee|benz|pulmoclear)\b', line, re.IGNORECASE)
+            
+            if starts_number or starts_prefix:
+                if current_block:
+                    blocks.append(" ".join(current_block))
+                current_block = [line]
+            else:
+                if current_block:
+                    current_block.append(line)
+        if current_block:
+            blocks.append(" ".join(current_block))
+            
+        # Parse each block
+        for block in blocks:
+            block_upper = block.upper()
+            block_words = re.split(r'\W+', block_upper)
+            
+            has_drug_term = any(w in drug_terms for w in block_words if len(w) >= 3)
+            has_dosage_pattern = bool(re.search(r'\b(1-0-1|1-1-1|1-0-0|0-0-1|TDS|BD|OD|HS|SOS)\b', block_upper))
+            
+            if not (has_drug_term or has_dosage_pattern):
                 continue
-            
-            # Filter lines that look like prescriptions (exclude doctor header, date, patient details)
-            if any(k in line.upper() for k in ["DR.", "HOSPITAL", "PATIENT", "DATE", "AGE", "SEX", "RX", "RECIPE"]):
-                # Skip header lines unless it has actual medicine names in a list
-                if not any(m in line.upper() for m in ["TAB", "CAP", "SYP", "INJ", "DOLO", "PANTOCID", "AUGMENTIN"]):
-                    continue
-            
-            # Check for frequency codes (1-0-1, TDS, etc.)
-            freq_match = re.search(r'\b(1-0-1|1-1-1|1-0-0|0-0-1|TDS|BD|OD|HS|SOS)\b', line, re.IGNORECASE)
-            # Check for duration (e.g. 5 days, 5days, 1 week, 10 days)
-            dur_match = re.search(r'\b(\d+)\s*(?:days|day|weeks|week|months|month)\b', line, re.IGNORECASE)
-            # Check for strength
-            str_match = re.search(r'\b\d+\s*(?:mg|mcg|g|ml)\b', line, re.IGNORECASE)
-            
-            # Let's see if we can identify a medicine name.
-            # Strip frequency and duration out of line, look for remaining alphabetic parts
-            clean_med_line = line
-            if freq_match:
-                clean_med_line = clean_med_line.replace(freq_match.group(0), "")
-            if dur_match:
-                clean_med_line = clean_med_line.replace(dur_match.group(0), "")
                 
-            # Remove symbols
-            med_name_candidate = re.sub(r'[\d\-]', '', clean_med_line)
-            # Clean it up
-            med_name_candidate = re.sub(r'\b(?:tab|cap|syp|inj|tablets|capsules|tablet|capsule)\b', '', med_name_candidate, flags=re.IGNORECASE)
-            med_name_candidate = re.sub(r'\s+', ' ', med_name_candidate).strip()
+            # Extract strength
+            str_match = re.search(r'\b\d+\s*(?:mg|mcg|g|ml|gm)\b', block, re.IGNORECASE)
+            strength = str_match.group(0) if str_match else ""
             
-            # If we found a valid medicine candidate (at least 3 characters)
-            if len(med_name_candidate) >= 3 and any(k in line.upper() for k in ["TAB", "CAP", "SYP", "INJ", "DOLO", "PANTOCID", "AUGMENTIN", "SHELCAL", "MONTAIR", "GLYCOMET", "LIMCEE"]):
-                dosage = freq_match.group(0) if freq_match else "1-0-0"
-                duration = int(dur_match.group(1)) if dur_match else 5
-                strength = str_match.group(0) if str_match else ""
+            # Extract dosage/frequency
+            freq_match = re.search(r'\b(1-0-1|1-1-1|1-0-0|0-0-1|TDS|BD|OD|HS|SOS)\b', block, re.IGNORECASE)
+            dosage = freq_match.group(0) if freq_match else ("1-0-0" if "SPRAY" in block_upper else "1-0-0")
+            
+            # Extract duration (days)
+            dur_match = re.search(r'\b(?:for|x)?\s*(\d+)\s*(?:day|week|month)s?\b', block, re.IGNORECASE)
+            duration = int(dur_match.group(1)) if dur_match else 5
+            
+            # Clean medicine name candidate
+            clean_block = re.sub(r'^\d+[\.\s\)]+', '', block).strip()
+            
+            # Split block to remove dosage instructions/metadata details from the name
+            split_parts = re.split(r'--|-,|\bOral\b|\bfrom\b|\bfor\b|\b\d+\s*Capsule\b|\b\d+\s*Tablet\b|\b\d+\s*mg\b|\b\d-\d-\d\b', clean_block, flags=re.IGNORECASE)
+            name_part = split_parts[0].strip()
+            
+            if strength:
+                name_part = re.sub(re.escape(strength), '', name_part, flags=re.IGNORECASE)
+            name_part = re.sub(r'\b(?:tab|cap|syp|inj|syr|sachet|tablets|capsules|tablet|capsule)\b', '', name_part, flags=re.IGNORECASE)
+            
+            clean_name = re.sub(r'[^\w\s\+\(\)]', ' ', name_part)
+            clean_name = re.sub(r'\s+', ' ', clean_name).strip()
+            
+            if len(clean_name) < 3:
+                continue
                 
-                # Try calculating expected quantity
-                # freq_mult
-                freq_mult = 1
-                if dosage.upper() in ["TDS", "THRICE"]:
-                    freq_mult = 3
-                elif dosage.upper() in ["BD", "TWICE"]:
-                    freq_mult = 2
-                elif dosage.upper() == "1-0-1":
-                    freq_mult = 2
-                elif dosage.upper() == "1-1-1":
-                    freq_mult = 3
+            freq_mult = 1
+            if dosage.upper() in ["TDS", "THRICE"]:
+                freq_mult = 3
+            elif dosage.upper() in ["BD", "TWICE"]:
+                freq_mult = 2
+            elif dosage.upper() == "1-0-1":
+                freq_mult = 2
+            elif dosage.upper() == "1-1-1":
+                freq_mult = 3
                 
-                medicines.append({
-                    "medicine_name": med_name_candidate,
-                    "strength": strength,
-                    "dosage": dosage,
-                    "frequency": dosage,
-                    "duration_days": duration,
-                    "quantity": duration * freq_mult
-                })
+            medicines.append({
+                "medicine_name": clean_name,
+                "strength": strength,
+                "dosage": dosage,
+                "frequency": dosage,
+                "duration_days": duration,
+                "quantity": duration * freq_mult
+            })
                 
     else: # doc_type == "bill"
-        # Look for medicine items, quantity, prices
-        # format: e.g. "Dolo 650 10 tabs 60.00"
+        # 1. Extract all decimal numbers (prices) from the entire text
+        decimals = []
         for line in lines:
-            if not line.strip() or len(line.strip()) < 4:
+            for val in re.findall(r'\b\d+\.\d{2}\b', line):
+                try:
+                    decimals.append(float(val))
+                except ValueError:
+                    pass
+                    
+        # Remove duplicates while preserving order
+        seen = set()
+        decimals = [x for x in decimals if not (x in seen or seen.add(x))]
+        
+        # 2. Extract medicine lines
+        for idx, line in enumerate(lines):
+            line_upper = line.upper()
+            
+            # Skip headers, patient metadata, and doctor info
+            if any(k in line_upper for k in ["INVOICE", "BILL TO", "TAX INVOICE", "TOTAL", "CASH", "CARD", "GST", "QTY", "PRODUCT NAME", "HSN CODE", "CLIENT", "PATIENT", "DOCTOR", "NAME:", "DATE:", "PHONE:"]):
                 continue
                 
-            # Skip invoice headers
-            if any(k in line.upper() for k in ["INVOICE", "BILL TO", "TAX INVOICE", "TOTAL", "CASH", "CARD", "GST"]):
+            # Tokenize and check if this line contains any drug terms
+            words = re.split(r'\W+', line_upper)
+            has_drug = any(w in drug_terms for w in words if len(w) >= 3)
+            
+            if not has_drug:
                 continue
                 
-            # Look for pricing / decimal numbers at the end of the line
-            price_matches = re.findall(r'\b\d+\.\d{2}\b', line)
-            # Look for integers representing quantity
-            qty_match = re.search(r'\b(?:qty|quantity|x)?\s*(\d+)\b', line, re.IGNORECASE)
-            # Look for strength
-            str_match = re.search(r'\b\d+\s*(?:mg|mcg|g|ml)\b', line, re.IGNORECASE)
+            # Clean name candidate
+            name_candidate = line
+            name_candidate = re.sub(r'\b\d{8}\b', '', name_candidate)
+            name_candidate = re.sub(r'\b[HGXN]\b', '', name_candidate)
+            name_candidate = re.sub(r'\b\d+\.\d{2}\b', '', name_candidate)
+            name_candidate = re.sub(r'^\s*\d+\b', '', name_candidate)
             
-            # Clean line of prices/quantities to isolate medicine name
-            clean_line = line
-            for pm in price_matches:
-                clean_line = clean_line.replace(pm, "")
-            if qty_match:
-                clean_line = clean_line.replace(qty_match.group(0), "")
-                
-            clean_line = re.sub(r'\b(?:tab|cap|syp|inj|tablets|capsules|tablet|capsule)\b', '', clean_line, flags=re.IGNORECASE)
-            med_name_candidate = re.sub(r'\s+', ' ', clean_line).strip()
+            # Extract strength
+            str_match = re.search(r'\b\d+\s*(?:mg|mcg|g|ml|gm)\b', name_candidate, re.IGNORECASE)
+            strength = str_match.group(0) if str_match else ""
             
-            # We want to extract item name if valid
-            if len(med_name_candidate) >= 3 and any(k in line.upper() for k in ["TAB", "CAP", "SYP", "INJ", "DOLO", "PANTOCID", "AUGMENTIN", "SHELCAL", "MONTAIR", "GLYCOMET", "LIMCEE", "HORLICKS", "PEARS", "SOAP", "NIVEA", "PROTINEX", "SNACKS"]):
-                qty = int(qty_match.group(1)) if qty_match else 10
-                unit_price = float(price_matches[-2]) if len(price_matches) >= 2 else (float(price_matches[0])/qty if price_matches else 10.0)
-                total_price = float(price_matches[-1]) if price_matches else (qty * unit_price)
-                strength = str_match.group(0) if str_match else ""
+            # Clean name
+            clean_name = re.sub(r'\b(?:tab|cap|syp|inj|syr|sachet|tablets|capsules|tablet|capsule)\b', '', name_candidate, flags=re.IGNORECASE)
+            if strength:
+                clean_name = re.sub(re.escape(strength), '', clean_name, flags=re.IGNORECASE)
+            clean_name = re.sub(r'[^\w\s\+]', ' ', clean_name)
+            clean_name = re.sub(r'\s+', ' ', clean_name).strip()
+            
+            if len(clean_name) < 3:
+                continue
                 
-                medicines.append({
-                    "medicine_name": med_name_candidate,
-                    "strength": strength,
-                    "quantity": qty,
-                    "unit_price": unit_price,
-                    "total_price": total_price
-                })
-                
+            # Find quantity: search backwards for the first standalone integer
+            qty = 1
+            for j in range(idx - 1, -1, -1):
+                prev_line = lines[j].strip()
+                int_match = re.match(r'^\d+$', prev_line)
+                if int_match:
+                    qty = int(int_match.group(0))
+                    break
+                int_match2 = re.match(r'^(\d+)\b', prev_line)
+                if int_match2:
+                    qty = int(int_match2.group(1))
+                    break
+            
+            # Match prices mathematically
+            unit_price = 0.0
+            total_price = 0.0
+            matched_pair = False
+            
+            for u in decimals:
+                for t in decimals:
+                    if u == t and qty != 1:
+                        continue
+                    if abs(u * qty - t) < 0.01:
+                        unit_price = u
+                        total_price = t
+                        matched_pair = True
+                        break
+                if matched_pair:
+                    break
+                    
+            if not matched_pair:
+                line_decimals = [float(v) for v in re.findall(r'\b\d+\.\d{2}\b', line)]
+                if line_decimals:
+                    total_price = line_decimals[-1]
+                    unit_price = line_decimals[0] if len(line_decimals) >= 2 else total_price / qty
+                elif decimals:
+                    total_price = decimals[-1]
+                    unit_price = total_price / qty
+                    
+            medicines.append({
+                "medicine_name": clean_name,
+                "strength": strength,
+                "quantity": qty,
+                "unit_price": unit_price,
+                "total_price": total_price
+            })
+                        
     return {
         "metadata": metadata,
         "medicines": medicines
@@ -192,13 +340,12 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
 
 # Mock OCR results dictionary for testing/demos
 MOCK_OCR_DATA = {
-    # 1. Successful Claim Matching (Generic Prescription vs Brand Bill)
     "claim_success": {
         "prescription": {
             "metadata": {
                 "doctor_name": "Dr. Ramesh Verma (MD)",
                 "hospital_name": "Apollo Clinic, New Delhi",
-                "patient_name": "Rajesh Kumar",
+                "patient_name": "Sachin",
                 "date": "2026-07-01",
                 "invoice_number": "",
                 "total_amount": 0.0
@@ -213,7 +360,7 @@ MOCK_OCR_DATA = {
             "metadata": {
                 "doctor_name": "Dr. Ramesh Verma",
                 "hospital_name": "Apollo Clinic",
-                "patient_name": "Rajesh Kumar",
+                "patient_name": "Sachin",
                 "date": "2026-07-02",
                 "invoice_number": "TX-100234",
                 "total_amount": 920.00
@@ -225,7 +372,6 @@ MOCK_OCR_DATA = {
             ]
         }
     },
-    # 2. Warning Flags Claim (Strength and Quantity Mismatches)
     "claim_warning": {
         "prescription": {
             "metadata": {
@@ -251,11 +397,8 @@ MOCK_OCR_DATA = {
                 "total_amount": 1650.00
             },
             "medicines": [
-                # Strength Mismatch (billed 650mg instead of 500mg)
                 {"medicine_name": "Dolo 650", "strength": "650 mg", "quantity": 10, "unit_price": 2.50, "total_price": 25.00},
-                # Quantity Mismatch (billed 120 tablets instead of 30)
                 {"medicine_name": "Atorva 10", "strength": "10 mg", "quantity": 120, "unit_price": 12.00, "total_price": 1440.00},
-                # Non-medical rejection (Soap and Horlicks)
                 {"medicine_name": "Pears Soap", "strength": "N/A", "quantity": 2, "unit_price": 45.00, "total_price": 90.00},
                 {"medicine_name": "Horlicks 500g", "strength": "N/A", "quantity": 1, "unit_price": 295.00, "total_price": 295.00}
             ]
@@ -291,18 +434,20 @@ def process_and_extract_document(file_path: str, doc_type: str) -> dict:
             "parsed_data": data
         }
         
-    # 2. Try actual extraction if it's a PDF
-    raw_text = ""
-    if filename.endswith(".pdf"):
+    # 2. Try actual native Swift OCR extraction
+    raw_text = run_swift_ocr(file_path)
+    
+    # 3. Fallback to pdfplumber if Swift OCR is empty and file is PDF
+    if not raw_text and filename.endswith(".pdf"):
         raw_text = extract_text_from_pdf(file_path)
         
     if not raw_text:
         # Fallback raw text if image or empty PDF
         raw_text = f"Extracted from file: {filename}\n"
         if doc_type == "prescription":
-            raw_text += "Apollo Clinic, New Delhi\nDr. Ramesh Verma\nPatient: Rajesh Kumar\nDate: 2026-07-01\nRx:\nTab Dolo 650 mg 1-0-1 for 10 days\nTab Pantocid 40 mg 1-0-0 for 10 days\n"
+            raw_text += "Apollo Clinic, New Delhi\nDr. Ramesh Verma\nPatient: Sachin\nDate: 2026-07-01\nRx:\nTab Dolo 650 mg 1-0-1 for 10 days\nTab Pantocid 40 mg 1-0-0 for 10 days\n"
         else:
-            raw_text += "Apollo Pharmacy\nBill No: TX-100234\nDate: 2026-07-02\nPatient: Rajesh Kumar\nItems:\nDolo 650mg Qty 20 Price 50.00\nPantocid 40mg Qty 10 Price 120.00\nTotal Amount 170.00\n"
+            raw_text += "Apollo Pharmacy\nBill No: TX-100234\nDate: 2026-07-02\nPatient: Sachin\nItems:\nDolo 650mg Qty 20 Price 50.00\nPantocid 40mg Qty 10 Price 120.00\nTotal Amount 170.00\n"
 
     parsed_data = parse_extracted_text(raw_text, doc_type)
     
