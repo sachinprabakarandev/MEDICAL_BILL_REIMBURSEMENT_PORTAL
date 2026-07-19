@@ -1,8 +1,11 @@
 {
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/bin/python",
   "python.analysis.extraPaths": [
-    "./backend"
+    "./backend",
+    "./backend/venv/lib/python3.14/site-packages"
   ],
   "python.autoComplete.extraPaths": [
-    "./backend"
+    "./backend",
+    "./backend/venv/lib/python3.14/site-packages"
   ]
 }
