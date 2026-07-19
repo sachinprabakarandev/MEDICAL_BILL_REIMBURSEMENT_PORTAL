@@ -565,25 +565,18 @@ def process_and_extract_document(file_path: str, doc_type: str) -> dict:
     except Exception as e:
         print(f"[OCR] Gemma extraction skipped: {e}")
 
-    # 5. Ultimate fallback if both failed
+    # 5. Handle fallback raw text and parsing
     if not raw_text:
-        # Fallback raw text if image or empty PDF
-        raw_text = f"Extracted from file: {filename}\n"
-        if doc_type == "prescription":
-            raw_text += "Apollo Clinic, New Delhi\nDr. Ramesh Verma\nPatient: Sachin\nDate: 2026-07-01\nRx:\nTab Dolo 650 mg 1-0-1 for 10 days\nTab Pantocid 40 mg 1-0-0 for 10 days\n"
-        else:
-            raw_text += "Apollo Pharmacy\nBill No: TX-100234\nDate: 2026-07-02\nPatient: Sachin\nItems:\nDolo 650mg Qty 20 Price 50.00\nPantocid 40mg Qty 10 Price 120.00\nTotal Amount 170.00\n"
+        raw_text = "[No text could be extracted from this document.]"
 
     if not parsed_data:
         parsed_data = parse_extracted_text(raw_text, doc_type)
     
-    # If no medicines found from regex, load successful defaults to avoid empty states
-    if not parsed_data["medicines"]:
-        data = MOCK_OCR_DATA["claim_success"][doc_type]
-        parsed_data = data
+    # Determine status based on whether medicines were found
+    status = "Success" if parsed_data.get("medicines") else "Warning"
         
     return {
-        "status": "Success",
+        "status": status,
         "raw_text": raw_text,
         "confidence_metrics": json.dumps({"overall_confidence": 85.0, "fields": {m["medicine_name"]: 88.0 for m in parsed_data["medicines"]}}),
         "parsed_data": parsed_data
