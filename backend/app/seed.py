@@ -15,7 +15,8 @@ def get_password_hash(password: str) -> str:
     return hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000).hex()
 
 def seed_db():
-    print("Creating tables...")
+    print("Recreating database tables...")
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     
     db: Session = SessionLocal()
@@ -81,7 +82,7 @@ def seed_db():
                 DrugMaster(id=9, generic_name="Benzonatate", drug_category="Antitussive", notes="Cough suppressant. Do not chew capsule."),
                 DrugMaster(id=10, generic_name="Acebrophylline + Acetylcysteine", drug_category="Mucolytic/Bronchodilator", notes="For productive cough and airway clearance."),
                 DrugMaster(id=11, generic_name="Celecoxib", drug_category="NSAID (Analgesic)", notes="For pain and inflammatory relief."),
-                DrugMaster(id=12, generic_name="Enymeral Forte", drug_category="Analgesic/Anti-inflammatory", notes="Enzyme-based pain and swelling reliever."),
+                DrugMaster(id=12, generic_name="Trypsin Chymotrypsin", drug_category="Analgesic/Anti-inflammatory", notes="Enzyme-based pain and swelling reliever."),
                 DrugMaster(id=13, generic_name="Diclofenac Spray", drug_category="Topical Analgesic", notes="For localized musculoskeletal pain relief."),
                 
                 # Non-medical rejections
@@ -160,9 +161,23 @@ def seed_db():
                 DrugBrandMapping(drug_id=9, brand_name="Benz Pearls 100mg Caps 10's", strength_standardized="100 mg"),
                 DrugBrandMapping(drug_id=10, brand_name="Pulmoclear", strength_standardized="100 mg + 600 mg"),
                 DrugBrandMapping(drug_id=10, brand_name="Pulmoclear Tab 15's", strength_standardized="100 mg + 600 mg"),
+                # Celecoxib brands & OCR variants
                 DrugBrandMapping(drug_id=11, brand_name="Celebrex", strength_standardized="200 mg"),
+                DrugBrandMapping(drug_id=11, brand_name="Celethex", strength_standardized="200 mg"),
+                
+                # Trypsin Chymotrypsin brands & OCR variants
+                DrugBrandMapping(drug_id=12, brand_name="Chymoral Forte", strength_standardized="N/A"),
+                DrugBrandMapping(drug_id=12, brand_name="Chymoral", strength_standardized="N/A"),
+                DrugBrandMapping(drug_id=12, brand_name="Enzymex Forte", strength_standardized="N/A"),
+                DrugBrandMapping(drug_id=12, brand_name="Enzymex", strength_standardized="N/A"),
                 DrugBrandMapping(drug_id=12, brand_name="Enymeral Forte", strength_standardized="N/A"),
+                DrugBrandMapping(drug_id=12, brand_name="Enymeral", strength_standardized="N/A"),
+                DrugBrandMapping(drug_id=12, brand_name="Ehymeral Forte", strength_standardized="N/A"),
+                DrugBrandMapping(drug_id=12, brand_name="Ehymeral", strength_standardized="N/A"),
+                
+                # Diclofenac Spray brands & variants
                 DrugBrandMapping(drug_id=13, brand_name="Volitra APS Spray", strength_standardized="N/A"),
+                DrugBrandMapping(drug_id=13, brand_name="Volitra APS Topical Solution", strength_standardized="N/A"),
                 
                 # Non-medical rejects (exact brands mapped for auto-detection)
                 DrugBrandMapping(drug_id=100, brand_name="Pears Soap", strength_standardized="N/A"),

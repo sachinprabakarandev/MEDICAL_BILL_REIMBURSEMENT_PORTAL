@@ -9,7 +9,7 @@ employees, reviewers, and admins, plus audit logging and exportable reports.
 
 - **Backend:** FastAPI, SQLAlchemy (SQLite), python-jose (JWT auth)
 - **Frontend:** Jinja2 server-rendered templates + static CSS
-- **OCR / parsing:** pdfplumber, Pillow
+- **OCR / parsing:** Gemma vision model via Ollama (handwriting), Apple Vision Swift helper, pdfplumber, Pillow
 - **Reports:** openpyxl (Excel), reportlab (PDF), CSV
 
 ## Project Structure
@@ -21,7 +21,8 @@ backend/
     auth.py            # JWT auth & password hashing
     database.py        # SQLAlchemy engine/session
     models.py          # ORM models
-    ocr_engine.py      # Document text extraction
+    ocr_engine.py      # Document text extraction (gateway + regex parsing + fallbacks)
+    gemma_ocr.py       # Vision LLM extraction (Gemma via Ollama) for handwriting
     intelligence.py    # Prescription <-> bill matching
     rules.py           # Claim validation rules engine
     reports.py         # CSV / Excel / PDF report generation
@@ -52,6 +53,30 @@ uvicorn app.main:app --reload
 ```
 
 Then open http://127.0.0.1:8000
+
+### Handwriting OCR (Gemma vision model)
+
+Handwritten doctor prescriptions are read by a local **Gemma** multimodal model
+served through [Ollama](https://ollama.com). This is optional — if Ollama or the
+model isn't available, extraction automatically falls back to the Apple Vision
+Swift helper / pdfplumber + regex path.
+
+```bash
+brew install ollama            # macOS
+ollama serve                   # start the local server (or: brew services start ollama)
+ollama pull gemma3:4b          # vision-capable model (~3.3 GB)
+```
+
+Configurable via environment variables (all optional):
+
+| Variable        | Default                  | Purpose                          |
+|-----------------|--------------------------|----------------------------------|
+| `OLLAMA_URL`    | `http://localhost:11434` | Ollama server address            |
+| `GEMMA_MODEL`   | `gemma3:4b`              | Model tag (e.g. `gemma3:12b`)    |
+| `GEMMA_TIMEOUT` | `180`                    | Per-page request timeout (secs)  |
+
+Larger tags (`gemma3:12b`, `gemma3:27b`) read messy handwriting more accurately
+at the cost of speed and memory.
 
 ## Demo Accounts
 

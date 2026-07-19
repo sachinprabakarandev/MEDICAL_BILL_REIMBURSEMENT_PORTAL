@@ -44,6 +44,7 @@ def calculate_levenshtein_distance(s1: str, s2: str) -> int:
     return previous_row[-1]
 
 def string_similarity(s1: str, s2: str) -> float:
+    import difflib
     # Normalize strings
     ns1 = normalize_text(s1)
     ns2 = normalize_text(s2)
@@ -55,24 +56,42 @@ def string_similarity(s1: str, s2: str) -> float:
     if ns1 == ns2:
         return 1.0
         
-    # Token-based intersection (jaccard-like)
-    tokens1 = set(ns1.split())
-    tokens2 = set(ns2.split())
+    # Overall character-level similarity
+    overall_ratio = difflib.SequenceMatcher(None, ns1, ns2).ratio()
+    
+    # Token-level fuzzy similarity
+    tokens1 = ns1.split()
+    tokens2 = ns2.split()
     
     if not tokens1 or not tokens2:
-        return 0.0
+        return overall_ratio
         
-    intersection = tokens1.intersection(tokens2)
-    union = tokens1.union(tokens2)
-    token_score = len(intersection) / len(union)
+    # Match each token in tokens1 to the best matching token in tokens2
+    matched_count = 0
+    used_indices = set()
     
-    # Distance-based similarity
-    distance = calculate_levenshtein_distance(ns1, ns2)
-    max_len = max(len(ns1), len(ns2))
-    distance_score = 1.0 - (distance / max_len) if max_len > 0 else 0.0
+    for t1 in tokens1:
+        best_sim = 0.0
+        best_idx = -1
+        for idx, t2 in enumerate(tokens2):
+            if idx in used_indices:
+                continue
+            sim = difflib.SequenceMatcher(None, t1, t2).ratio()
+            if sim > best_sim:
+                best_sim = sim
+                best_idx = idx
+        
+        # If the tokens match with at least 70% similarity, count it as a match
+        if best_sim >= 0.70:
+            matched_count += 1
+            used_indices.add(best_idx)
+            
+    # Fuzzy Jaccard score
+    fuzzy_union = len(tokens1) + len(tokens2) - matched_count
+    fuzzy_token_score = (matched_count / fuzzy_union) if fuzzy_union > 0 else 0.0
     
-    # Combine token intersection and character distance (60% token, 40% distance)
-    return (token_score * 0.6) + (distance_score * 0.4)
+    # Return the maximum of overall similarity and token fuzzy similarity
+    return max(overall_ratio, fuzzy_token_score)
 
 def resolve_medicine(db: Session, raw_name: str) -> dict:
     """

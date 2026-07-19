@@ -747,8 +747,17 @@
             color: var(--red-600);
         }
 
+        .status-warning {
+            background-color: #FEF3C7;
+            color: #D97706;
+        }
+
         .row-rejected {
             background-color: rgba(197, 48, 48, 0.02);
+        }
+
+        .row-warning {
+            background-color: rgba(217, 119, 6, 0.01);
         }
 
         .amount-rejected {
@@ -1039,6 +1048,17 @@
                 </div>
 
                 <div class="results-body">
+                    <!-- Metadata Validation Card -->
+                    <div class="card mb-4" id="metadata-validation-card" style="display: none; border-radius: 12px; border: 1px solid var(--line); box-shadow: 0 4px 12px rgba(0,0,0,0.02); overflow: hidden; margin-bottom: 24px; background: white;">
+                        <div style="background-color: #F9FAFB; padding: 14px 20px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 0.9rem; color: var(--ink); display: flex; align-items: center; gap: 8px;">
+                            <i class="bi bi-shield-check" style="color: var(--blue-600); font-size: 1.1rem;"></i>
+                            Document Metadata Verification
+                        </div>
+                        <div style="padding: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;" id="metadata-validation-grid">
+                            <!-- Items will be populated dynamically -->
+                        </div>
+                    </div>
+
                     <h3 class="results-section-title">Prescription vs. Bill — Comparison</h3>
                     <p class="results-section-subtitle">Every billed item is matched against your prescription. Items not prescribed or non-medical are rejected.</p>
 
@@ -1345,6 +1365,16 @@
                 return;
             }
 
+            // Clear computed results to prevent cache leakage
+            verificationResults = {
+                claimId: '',
+                approvedAmount: 0,
+                rejectedAmount: 0,
+                totalBilled: 0,
+                rows: []
+            };
+            pdfAnalysisResult = { prescMeds: [], billedMeds: [], detectedName: "", detectedEmpId: "", MED_DETAILS: {} };
+
             // Update Stepper
             document.getElementById('step-1').className = 'step completed';
             document.getElementById('step-1').querySelector('.step-badge').innerHTML = '<i class="bi bi-check-lg"></i>';
@@ -1406,8 +1436,18 @@
                         }
                     }, 50);
                 } else {
+                    // Animation done — show a waiting message while backend finishes
+                    const verifyTitle = document.querySelector('.verifying-title');
+                    const verifySub = document.querySelector('.verifying-sub');
+                    if (verifyTitle) verifyTitle.textContent = 'AI is analyzing your documents…';
+                    if (verifySub) verifySub.textContent = 'This may take a moment for handwritten prescriptions. Please wait.';
+                    // Add a pulsing effect to the progress ring
+                    const ring = document.querySelector('.progress-container');
+                    if (ring) ring.style.animation = 'pulse 1.5s ease-in-out infinite';
+
                     // Complete verification, transition to results
                     fetchPromise.then((data) => {
+                        if (ring) ring.style.animation = '';
                         if (fetchError || !data) {
                             console.warn("Falling back to prototype simulation due to backend error");
                             detectPdfKeywords().then((keywords) => {
@@ -1460,6 +1500,9 @@
                             prescribed: med.prescribedName,
                             billed: med.billedName,
                             approved: true,
+                            status: "Approved",
+                            approved_amount: med.amount,
+                            rejected_amount: 0,
                             reason: med.reason,
                             amount: med.amount
                         });
@@ -1468,6 +1511,9 @@
                             prescribed: med.prescribedName,
                             billed: "— Not purchased —",
                             approved: false,
+                            status: "Rejected",
+                            approved_amount: 0,
+                            rejected_amount: 0,
                             reason: "Not approved: Prescribed medicine was not purchased.",
                             amount: 0
                         });
@@ -1484,6 +1530,9 @@
                             prescribed: "— Not prescribed —",
                             billed: med.billedName,
                             approved: false,
+                            status: "Rejected",
+                            approved_amount: 0,
+                            rejected_amount: med.amount,
                             reason: "Not approved: Purchased item is not present in doctor's prescription.",
                             amount: med.amount
                         });
@@ -1519,6 +1568,9 @@
                     prescribed: med.generic,
                     billed: med.brand,
                     approved: true,
+                    status: "Approved",
+                    approved_amount: amount,
+                    rejected_amount: 0,
                     reason: med.reason,
                     amount: amount
                 });
@@ -1530,6 +1582,9 @@
                 prescribed: '— Not prescribed —',
                 billed: selectedPersonal.name,
                 approved: false,
+                status: "Rejected",
+                approved_amount: 0,
+                rejected_amount: personalAmount,
                 reason: selectedPersonal.reason,
                 amount: personalAmount
             });
@@ -1611,28 +1666,92 @@
             
             verificationResults.rows.forEach(row => {
                 const tr = document.createElement('tr');
-                if (!row.approved) {
+                if (row.status === 'Rejected') {
                     tr.className = 'row-rejected';
+                } else if (row.status === 'Warning') {
+                    tr.className = 'row-warning';
                 }
                 
-                const prescribedCell = row.approved ? row.prescribed : `<em style="color: var(--muted);">${row.prescribed}</em>`;
-                const statusPill = row.approved 
-                    ? '<span class="status-pill status-approved">Approved</span>' 
-                    : '<span class="status-pill status-rejected">Rejected</span>';
+                const isApprovedOrWarning = (row.status === 'Approved' || row.status === 'Warning');
+                const prescribedCell = isApprovedOrWarning ? row.prescribed : `<em style="color: var(--muted);">${row.prescribed}</em>`;
                 
-                const amountCell = row.approved 
-                    ? `<strong>${formatter.format(row.amount)}</strong>` 
-                    : `<span class="amount-rejected">${formatter.format(row.amount)}</span>`;
+                let statusClass = 'status-rejected';
+                if (row.status === 'Approved') statusClass = 'status-approved';
+                else if (row.status === 'Warning') statusClass = 'status-warning';
+                
+                const statusPill = `<span class="status-pill ${statusClass}">${row.status}</span>`;
+                
+                let amountCell = '';
+                if (row.status === 'Approved') {
+                    amountCell = `<strong>${formatter.format(row.approved_amount)}</strong>`;
+                } else if (row.status === 'Warning') {
+                    amountCell = `<strong>${formatter.format(row.approved_amount)}</strong><br><span style="font-size: 0.75rem; color: var(--muted); text-decoration: line-through;">${formatter.format(row.rejected_amount)}</span>`;
+                } else {
+                    amountCell = `<span class="amount-rejected">${formatter.format(row.rejected_amount)}</span>`;
+                }
+
+                const reasonColor = row.status === 'Approved' ? 'var(--ink)' : (row.status === 'Warning' ? '#D97706' : 'var(--red-600)');
 
                 tr.innerHTML = `
                     <td>${prescribedCell}</td>
                     <td class="cell-mono">${row.billed}</td>
                     <td>${statusPill}</td>
-                    <td style="color: ${row.approved ? 'var(--ink)' : 'var(--red-600)'};">${row.reason}</td>
+                    <td style="color: ${reasonColor};">${row.reason}</td>
                     <td style="text-align: right;">${amountCell}</td>
                 `;
                 tbody.appendChild(tr);
             });
+
+            // Populate metadata validation
+            const metadataCard = document.getElementById('metadata-validation-card');
+            const metadataGrid = document.getElementById('metadata-validation-grid');
+            if (metadataCard && metadataGrid && verificationResults.metadata_validation) {
+                metadataCard.style.display = 'block';
+                metadataGrid.innerHTML = '';
+                
+                Object.keys(verificationResults.metadata_validation).forEach(key => {
+                    const item = verificationResults.metadata_validation[key];
+                    const div = document.createElement('div');
+                    div.style.cssText = "border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 6px; background-color: #FAFAFA;";
+                    
+                    let icon = 'bi-check-circle-fill';
+                    let iconColor = 'var(--green-600)';
+                    let bg = '#ECFDF5';
+                    if (item.status === 'Warning') {
+                        icon = 'bi-exclamation-triangle-fill';
+                        iconColor = '#D97706';
+                        bg = '#FFFBEB';
+                    } else if (item.status === 'Rejected') {
+                        icon = 'bi-x-circle-fill';
+                        iconColor = 'var(--red-600)';
+                        bg = '#FEF2F2';
+                    }
+                    
+                    let label = key.charAt(0).toUpperCase() + key.slice(1);
+                    if (label === 'Date') label = 'Date Validation';
+                    else if (label === 'Doctor') label = 'Doctor Verification';
+                    else if (label === 'Patient') label = 'Patient Verification';
+                    
+                    div.innerHTML = `
+                        <div style="display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: 0.85rem;">
+                            <span>${label}</span>
+                            <span style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: ${iconColor}; display: inline-flex; align-items: center; gap: 4px;">
+                                <i class="bi ${icon}"></i> ${item.status}
+                            </span>
+                        </div>
+                        <div style="font-size: 0.8rem; color: var(--muted); margin-top: 4px;">
+                            <strong>Prescription:</strong> ${item.prescription || 'N/A'}<br>
+                            <strong>Invoice:</strong> ${item.bill || 'N/A'}
+                        </div>
+                        <div style="font-size: 0.78rem; color: ${iconColor}; margin-top: 4px; padding: 6px 10px; border-radius: 4px; background-color: ${bg}; font-weight: 500;">
+                            ${item.reason}
+                        </div>
+                    `;
+                    metadataGrid.appendChild(div);
+                });
+            } else if (metadataCard) {
+                metadataCard.style.display = 'none';
+            }
 
             // Summaries
             document.getElementById('summary-total').innerText = formatter.format(verificationResults.totalBilled);
@@ -1655,6 +1774,16 @@
             updateDropzoneState('bill');
             validateForm();
 
+            // Clear computed results to prevent cache leakage
+            verificationResults = {
+                claimId: '',
+                approvedAmount: 0,
+                rejectedAmount: 0,
+                totalBilled: 0,
+                rows: []
+            };
+            pdfAnalysisResult = { prescMeds: [], billedMeds: [], detectedName: "", detectedEmpId: "", MED_DETAILS: {} };
+
             // Reset Stepper
             document.getElementById('step-1').className = 'step active';
             document.getElementById('step-1').querySelector('.step-badge').innerText = '1';
@@ -1670,8 +1799,16 @@
             // Reset checklist UI
             for (let i = 0; i < 5; i++) {
                 const item = document.getElementById('chk-' + i);
-                item.className = 'checklist-item';
+                if (item) {
+                    item.className = 'checklist-item';
+                }
             }
+
+            // Reset verifying view texts
+            const verifyTitle = document.querySelector('.verifying-title');
+            const verifySub = document.querySelector('.verifying-sub');
+            if (verifyTitle) verifyTitle.textContent = 'Verifying your documents…';
+            if (verifySub) verifySub.textContent = 'Matching each medicine against your prescription. Please don\'t close this window.';
 
             // Show stage 1
             document.getElementById('stage-3-view').classList.remove('active');

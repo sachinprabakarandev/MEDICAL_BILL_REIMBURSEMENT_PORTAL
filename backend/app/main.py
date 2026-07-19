@@ -531,29 +531,178 @@ async def verify_claim_api(
             p_name = pm.medicine_name if pm else "— Not prescribed —"
             b_name = bm.medicine_name if bm else "— Not purchased —"
             
-            approved = (status == "Approved")
             amount = bm.total_price if bm else 0.0
             
-            if approved:
-                approved_sum += amount
+            item_approved_amt = 0.0
+            item_rejected_amt = 0.0
+            item_status = "Rejected"
+            
+            if status == "Approved":
+                item_approved_amt = amount
+                item_status = "Approved"
+            elif status == "Pending Review":
+                # Check for excess quantity and calculate partial/pro-rata approval
+                if pm and bm:
+                    duration = pm.duration_days or 0
+                    from app.rules import parse_frequency
+                    pm_dosage = pm.dosage or pm.frequency or ""
+                    if not pm_dosage and pm.strength:
+                        norm_strength = re.sub(r'[\/\.\s\-_]+', '-', pm.strength.strip())
+                        if re.match(r'^[0-2]-[0-2]-[0-2]$', norm_strength) or re.match(r'^[0-2]-[0-2]-[0-2]-[0-2]$', norm_strength):
+                            pm_dosage = pm.strength
+                    freq_mult = parse_frequency(pm_dosage)
+                    expected_qty = duration * freq_mult
+                    billed_qty = bm.quantity or 1
+                    
+                    if expected_qty > 0 and billed_qty > expected_qty:
+                        # Partial approval
+                        eligible_fraction = expected_qty / billed_qty
+                        item_approved_amt = round(amount * eligible_fraction, 2)
+                        item_rejected_amt = round(amount * (1.0 - eligible_fraction), 2)
+                        item_status = "Warning"
+                        reason = f"Approved up to prescribed quantity ({expected_qty} of {billed_qty}). Excess {billed_qty - expected_qty} items (amount {item_rejected_amt}) rejected."
+                    else:
+                        # Other warning, count full amount as approved but flag as warning
+                        item_approved_amt = amount
+                        item_status = "Warning"
+                else:
+                    item_approved_amt = amount
+                    item_status = "Warning"
             else:
-                rejected_sum += amount
+                item_rejected_amt = amount
+                item_status = "Rejected"
                 
+            approved_sum += item_approved_amt
+            rejected_sum += item_rejected_amt
+            
             rows.append({
                 "prescribed": p_name,
                 "billed": b_name,
-                "approved": approved,
+                "approved": (item_status in ["Approved", "Warning"]),
+                "status": item_status,
                 "reason": reason,
-                "amount": amount
+                "amount": item_approved_amt if item_status in ["Approved", "Warning"] else item_rejected_amt,
+                "approved_amount": item_approved_amt,
+                "rejected_amount": item_rejected_amt
             })
             
+        # Metadata matching
+        p_doc = presc_extracted.get("metadata", {}).get("doctor_name", "")
+        b_doc = bill_extracted.get("metadata", {}).get("doctor_name", "")
+        p_pat = presc_extracted.get("metadata", {}).get("patient_name", "")
+        b_pat = bill_extracted.get("metadata", {}).get("patient_name", "")
+        p_date_str = presc_extracted.get("metadata", {}).get("date", "")
+        b_date_str = bill_extracted.get("metadata", {}).get("date", "")
+        
+        # 1. Doctor Verification
+        doc_status = "Warning"
+        doc_reason = "Doctor name could not be extracted from one of the documents."
+        if p_doc and b_doc:
+            from app.intelligence import string_similarity
+            doc_sim = string_similarity(p_doc, b_doc)
+            if doc_sim >= 0.70:
+                doc_status = "Approved"
+                doc_reason = "Prescribing doctor matches billing invoice doctor."
+            else:
+                doc_status = "Warning"
+                doc_reason = f"Doctor name mismatch (Prescribed: {p_doc}, Billed: {b_doc})."
+        elif p_doc:
+            doc_reason = f"Doctor name on prescription is {p_doc}, but not found on bill."
+        elif b_doc:
+            doc_reason = f"Doctor name on bill is {b_doc}, but not found on prescription."
+            
+        # 2. Patient Verification
+        pat_status = "Warning"
+        pat_reason = "Patient name could not be extracted from one of the documents."
+        if p_pat and b_pat:
+            from app.intelligence import string_similarity
+            pat_sim = string_similarity(p_pat, b_pat)
+            if pat_sim >= 0.85:
+                pat_status = "Approved"
+                pat_reason = "Patient name matches claimant name."
+            elif pat_sim >= 0.65:
+                pat_status = "Warning"
+                pat_reason = f"Patient name partially matches claimant (Prescribed: {p_pat}, Billed: {b_pat}). Approved with review flags."
+            else:
+                pat_status = "Rejected"
+                pat_reason = f"Patient name mismatch (Prescribed: {p_pat}, Billed: {b_pat})."
+        elif p_pat:
+            pat_reason = f"Patient name on prescription is {p_pat}, but not found on bill."
+        elif b_pat:
+            pat_reason = f"Patient name on bill is {b_pat}, but not found on prescription."
+            
+        # 3. Date Validation
+        date_status = "Warning"
+        date_reason = "Date could not be parsed from one of the documents."
+        
+        def parse_any_date(date_str):
+            if not date_str:
+                return None
+            import re
+            from datetime import datetime
+            for fmt in ("%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d-%b-%Y", "%d-%B-%Y"):
+                try:
+                    return datetime.strptime(date_str.strip(), fmt)
+                except ValueError:
+                    continue
+            match = re.search(r'(\d{1,2})[/\-](\d{1,2}|[A-Za-z]{3})[/\-](\d{2,4})', date_str)
+            if match:
+                d, m, y = match.groups()
+                try:
+                    if len(y) == 2:
+                        y = "20" + y
+                    if m.isalpha():
+                        months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+                        m = months.index(m.lower()[:3]) + 1
+                    return datetime(int(y), int(m), int(d))
+                except Exception:
+                    pass
+            return None
+
+        p_date = parse_any_date(p_date_str)
+        b_date = parse_any_date(b_date_str)
+        
+        if p_date and b_date:
+            delta = (b_date - p_date).days
+            if 0 <= delta <= 30:
+                date_status = "Approved"
+                date_reason = f"Invoice date ({b_date_str}) matches prescription date ({p_date_str})."
+            elif delta < 0:
+                date_status = "Rejected"
+                date_reason = f"Invalid date: Invoice date ({b_date_str}) is older than prescription date ({p_date_str})."
+            else:
+                date_status = "Warning"
+                date_reason = f"Invoice date ({b_date_str}) is too late: is {delta} days after prescription date ({p_date_str})."
+        elif p_date_str or b_date_str:
+            date_reason = f"Could not correlate prescription date ({p_date_str or 'N/A'}) and invoice date ({b_date_str or 'N/A'})."
+
         random_id = f"CLM-2026-{random.randint(10000, 99999)}"
         return {
             "claimId": random_id,
             "approvedAmount": approved_sum,
             "rejectedAmount": rejected_sum,
             "totalBilled": approved_sum + rejected_sum,
-            "rows": rows
+            "rows": rows,
+            "metadata_validation": {
+                "doctor": {
+                    "prescription": p_doc,
+                    "bill": b_doc,
+                    "status": doc_status,
+                    "reason": doc_reason
+                },
+                "patient": {
+                    "prescription": p_pat,
+                    "bill": b_pat,
+                    "status": pat_status,
+                    "reason": pat_reason
+                },
+                "date": {
+                    "prescription": p_date_str,
+                    "bill": b_date_str,
+                    "status": date_status,
+                    "reason": date_reason
+                }
+            }
         }
     finally:
         try:

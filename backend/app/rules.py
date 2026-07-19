@@ -67,8 +67,14 @@ def evaluate_rules(db: Session, claim: Claim, matches: list) -> list:
             # Expected quantity = duration * frequency_multiplier
             # If no duration/frequency is extracted, we can try to find from text or default
             duration = pm.duration_days or 0
-            freq_mult = parse_frequency(pm.dosage or pm.frequency or "")
             
+            pm_dosage = pm.dosage or pm.frequency or ""
+            if not pm_dosage and pm.strength:
+                norm_strength = re.sub(r'[\/\.\s\-_]+', '-', pm.strength.strip())
+                if re.match(r'^[0-2]-[0-2]-[0-2]$', norm_strength) or re.match(r'^[0-2]-[0-2]-[0-2]-[0-2]$', norm_strength):
+                    pm_dosage = pm.strength
+                    
+            freq_mult = parse_frequency(pm_dosage)
             expected_qty = duration * freq_mult
             billed_qty = bm.quantity or 0
             
@@ -131,7 +137,11 @@ def parse_frequency(dosage: str) -> int:
     """
     Parses common frequency codes (TDS, BD, OD, 1-0-1, etc.) into daily multiplier.
     """
+    # Standardize dosage formats (like 1 1 1, 1/1/1, 1.1.1) to 1-1-1
     clean_dosage = dosage.upper().strip()
+    clean_dosage = re.sub(r'\b([0-2])\s*[\/\.\s\-]\s*([0-2])\s*[\/\.\s\-]\s*([0-2])\s*[\/\.\s\-]\s*([0-2])\b', r'\1-\2-\3-\4', clean_dosage)
+    clean_dosage = re.sub(r'\b([0-2])\s*[\/\.\s\-]\s*([0-2])\s*[\/\.\s\-]\s*([0-2])\b', r'\1-\2-\3', clean_dosage)
+    clean_dosage = re.sub(r'[\/\.\s\-_]+', '-', clean_dosage)
     
     # 1-0-1 or 1-1-1 patterns
     if re.match(r'^\d\-\d\-\d$', clean_dosage):
