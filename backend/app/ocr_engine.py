@@ -182,8 +182,12 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
         standard_forms = ["tab", "cap", "inj", "syp", "syr", "sachet", "spray", "ointment", "cream", "gel", "drops", "suspension", "powder"]
         prefix_set = set(standard_forms)
         for term in drug_terms:
-            if len(term) >= 3:
-                prefix_set.add(term.lower())
+            term_lower = term.lower()
+            # Skip purely numeric or strength-like terms
+            if re.match(r'^\d+(mg|mcg|ml|g|gm|s)?$', term_lower):
+                continue
+            if len(term_lower) >= 3:
+                prefix_set.add(term_lower)
         escaped_prefixes = [re.escape(p) for p in prefix_set]
         prefix_pattern = r'^(?:' + '|'.join(escaped_prefixes) + r')\b'
 
@@ -191,18 +195,13 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
         blocks = []
         current_block = []
         for line in lines:
-            # Normalize whitespace/symbols around dosage patterns in line
-            norm_line = re.sub(r'\b([0-2])\s*[\/\.\s\-]\s*([0-2])\s*[\/\.\s\-]\s*([0-2])\s*[\/\.\s\-]\s*([0-2])\b', r'\1-\2-\3-\4', line)
-            norm_line = re.sub(r'\b([0-2])\s*[\/\.\s\-]\s*([0-2])\s*[\/\.\s\-]\s*([0-2])\b', r'\1-\2-\3', norm_line)
-            norm_line = re.sub(r'(\d)\s*-\s*(\d)\s*-\s*(\d)\s*-\s*(\d)', r'\1-\2-\3-\4', norm_line)
-            norm_line = re.sub(r'(\d)\s*-\s*(\d)\s*-\s*(\d)', r'\1-\2-\3', norm_line)
-
-            starts_number = bool(re.match(r'^\d+[\.\s\)]', norm_line))
-            starts_prefix = bool(re.match(prefix_pattern, norm_line, re.IGNORECASE))
-            has_dosage = bool(re.search(r'\b(1-0-1|1-1-1|1-0-0|0-0-1|TDS|BD|OD|HS|SOS)\b', norm_line, re.IGNORECASE))
-            has_strength = bool(re.search(r'\b\d+\s*(?:mg|mcg|ml|g|gm)\b', norm_line, re.IGNORECASE))
+            norm_line = line.strip()
             
-            if starts_number or starts_prefix or has_dosage or has_strength:
+            starts_list_number = bool(re.match(r'^\d+[\.\)]\s*', norm_line))
+            starts_prefix = bool(re.match(prefix_pattern, norm_line, re.IGNORECASE))
+            starts_inj = bool(re.match(r'^(inj|tab|cap|syp|syr|sachet)\b', norm_line, re.IGNORECASE))
+            
+            if starts_list_number or starts_prefix or starts_inj:
                 if current_block:
                     blocks.append(current_block)
                 current_block = [line]
