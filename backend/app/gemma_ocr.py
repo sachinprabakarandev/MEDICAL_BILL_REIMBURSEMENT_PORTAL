@@ -80,17 +80,41 @@ def _normalize_gemini_response(parsed: dict) -> dict:
             continue
         
         dosage = str(m.get("dosage", "") or m.get("frequency", "") or "").strip()
+        qty = _coerce_int(m.get("quantity", 0))
+        u_price = _coerce_float(m.get("unit_price", 0.0))
+        t_price = _coerce_float(m.get("total_price", 0.0))
         
+        # Verify amount calculation: unit_price * quantity = total_price
+        expected_total = round(u_price * qty, 2)
+        if qty > 0 and u_price > 0.0:
+            if abs(t_price - expected_total) > 0.05:
+                print(f"[Gemini Verification] Mismatch for {name}: unit_price ({u_price}) * quantity ({qty}) = {expected_total}, but total_price is {t_price}. Adjusting to expected_total.")
+                t_price = expected_total
+        elif qty > 0 and t_price > 0.0 and u_price == 0.0:
+            u_price = round(t_price / qty, 2)
+        elif qty == 0 and u_price > 0.0 and t_price > 0.0:
+            qty = int(round(t_price / u_price))
+            
         medicines.append({
             "medicine_name": name,
             "strength": str(m.get("strength", "") or "").strip(),
             "dosage": dosage,
             "frequency": str(m.get("frequency", "") or dosage).strip(),
             "duration_days": _coerce_int(m.get("duration_days", 0)),
-            "quantity": _coerce_int(m.get("quantity", 0)),
-            "unit_price": _coerce_float(m.get("unit_price", 0.0)),
-            "total_price": _coerce_float(m.get("total_price", 0.0)),
+            "quantity": qty,
+            "unit_price": u_price,
+            "total_price": t_price,
         })
+        
+    # Verify metadata total amount against sum of medicines total prices
+    calc_total = sum(m["total_price"] for m in medicines)
+    if metadata["total_amount"] <= 0.0 and calc_total > 0.0:
+        print(f"[Gemini Verification] Setting total_amount to calculated sum of medicines: {calc_total}")
+        metadata["total_amount"] = calc_total
+    elif metadata["total_amount"] > 0.0 and calc_total > 0.0 and abs(metadata["total_amount"] - calc_total) > 0.05:
+        print(f"[Gemini Verification] Metadata total amount {metadata['total_amount']} mismatch with calculated sum {calc_total}. Adjusting to calculated sum.")
+        metadata["total_amount"] = calc_total
+        
     return {"metadata": metadata, "medicines": medicines}
 
 def extract_with_gemma(file_path: str, doc_type: str):
@@ -138,6 +162,13 @@ def extract_with_gemma(file_path: str, doc_type: str):
         response = model.generate_content(contents)
         text_response = response.text
         
+        # Generate the txt file
+        try:
+            with open("ocr.txt", "w", encoding="utf-8") as f:
+                f.write(text_response)
+        except Exception as e:
+            print(f"[Gemini] Error writing ocr.txt: {e}")
+            
         # Strip out any hallucinated markdown blocks
         cleaned_text = re.sub(r'```(?:json)?', '', text_response).strip()
         
@@ -156,7 +187,7 @@ def extract_with_gemma(file_path: str, doc_type: str):
         
         return {
             "status": status,
-            "raw_text": "Extracted via LLM",
+            "raw_text": text_response,
             "confidence_metrics": json.dumps(confidence_dict),
             "parsed_data": normalized_data
         }

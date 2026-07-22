@@ -156,14 +156,23 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
                 
         # Total Amount
         if "TOTAL" in line_upper or "AMOUNT" in line_upper or "NET PAY" in line_upper or "GROSS:" in line_upper:
-            amt_match = re.search(r'(?:Rs\.?|INR|\$|Gross:)?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', line, re.IGNORECASE)
+            amt_match = re.search(r'\b(?:TOTAL|AMOUNT|NET\s+PAY|GROSS)[:\-\s]*([A-Z]*\s*\d+(?:,\d{3})*(?:\.\d{2})?)', line_upper)
             if amt_match:
                 try:
-                    val = float(amt_match.group(1).replace(",", ""))
+                    val = float(amt_match.group(1).replace(" ", "").replace(",", ""))
                     if val > metadata["total_amount"]:
                         metadata["total_amount"] = val
                 except ValueError:
                     pass
+            else:
+                amt_match = re.search(r'(?:Rs\.?|INR|\$|Gross:)?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', line, re.IGNORECASE)
+                if amt_match:
+                    try:
+                        val = float(amt_match.group(1).replace(",", ""))
+                        if val > metadata["total_amount"]:
+                            metadata["total_amount"] = val
+                    except ValueError:
+                        pass
 
     drug_terms = get_all_drug_terms()
 
@@ -319,18 +328,74 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
             if is_header and not has_drug:
                 continue
                 
-            if not has_drug:
+            # Check if it has a known drug, medicine descriptor, or valid price math
+            has_desc = any(w in words for w in ["TAB", "CAP", "SYP", "INJ", "SUSP", "OINT", "CREAM", "GEL", "TABLETS", "CAPSULES", "TABLET", "CAPSULE", "MG", "ML", "MCG", "10'S", "15'S", "30'S", "10S", "15S", "30S"])
+            
+            # Check if the line has a valid price pair (u * qty = t)
+            line_numbers = []
+            for v in re.findall(r'\b\d+(?:\.\d+)?\b', line):
+                try:
+                    val = float(v)
+                    if 2020 <= val <= 2099:
+                        continue
+                    if val >= 100000.0:
+                        continue
+                    line_numbers.append(val)
+                except ValueError:
+                    pass
+            
+            # Extract quantity
+            qty_line = line
+            list_index_match = re.match(r'^\s*\d+[\.\)]\s*', qty_line)
+            if list_index_match:
+                qty_line = qty_line[list_index_match.end():]
+                
+            start_num_match = re.match(r'^\s*(\d+)\b', qty_line)
+            if start_num_match:
+                qty = int(start_num_match.group(1))
+            else:
+                qty_match = re.search(r'\b(?:qty|quantity|x|nos\.?)\s*(\d+)\b', qty_line, re.IGNORECASE)
+                if qty_match:
+                    qty = int(qty_match.group(1))
+                else:
+                    standalone_ints = re.findall(r'\b(\d+)\b', qty_line)
+                    if standalone_ints:
+                        qty = int(standalone_ints[0])
+                    else:
+                        qty = 1
+                        
+            # Check price match with parsed qty
+            has_price_match = False
+            if qty > 0:
+                for u in line_numbers:
+                    for t in line_numbers:
+                        if u == t and qty != 1:
+                            continue
+                        if abs(u * qty - t) < 0.05:
+                            has_price_match = True
+                            break
+                    if has_price_match:
+                        break
+                        
+            is_candidate = has_drug or has_desc or has_price_match
+            if not is_candidate:
                 continue
                 
             # Clean name candidate
-            name_candidate = line
+            name_candidate = qty_line
+            # Strip quantity at start
+            name_candidate = re.sub(r'^\s*\d+\s+', '', name_candidate)
+            
+            # Strip dates, HSN codes, and prices
+            name_candidate = re.sub(r'\b\d{4}[-/]\d{2}[-/]\d{2}\b', '', name_candidate)
+            name_candidate = re.sub(r'\b\d{2}[-/]\d{2}[-/]\d{4}\b', '', name_candidate)
+            name_candidate = re.sub(r'\b\d{2}[-/]\d{4}\b', '', name_candidate)
             name_candidate = re.sub(r'\b\d{8}\b', '', name_candidate)
-            name_candidate = re.sub(r'\b[HGXN]\b', '', name_candidate)
             name_candidate = re.sub(r'\b\d+\.\d{2}\b', '', name_candidate)
-            name_candidate = re.sub(r'^\s*\d+[\.\s\)]+', '', name_candidate)
+            name_candidate = re.sub(r'\b\d+\b', '', name_candidate)  # strip any remaining standalone integers
             
             # Split at common bill column headers/keywords to isolate drug name at the start
-            split_pat = r'\b(?:qty|quantity|rate|amount|price|nos\.?|rs\.?|inr|tab|cap|syp|inj|syr|sachet|tablets|capsules|tablet|capsule)\b'
+            split_pat = r'\b(?:qty|quantity|rate|amount|price|nos\.?|rs\.?|inr|tabs?|caps?|syps?|injs?|syrs?|sachet|tablets?|capsules?|tablet|capsule)\b'
             split_parts = re.split(split_pat, name_candidate, flags=re.IGNORECASE)
             clean_name = split_parts[0].strip()
             
@@ -347,56 +412,16 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
             if len(clean_name) < 3:
                 continue
                 
-            # Find quantity: try same line first, then fall back to previous lines
-            qty = 1
-            qty_line = line
-            if strength:
-                qty_line = re.sub(re.escape(strength), '', qty_line, flags=re.IGNORECASE)
-            qty_line = re.sub(r'\b\d+\.\d{2}\b', '', qty_line)
-            qty_line = re.sub(r'^\s*\d+[\.\s\)]+', '', qty_line)
-            
-            qty_match = re.search(r'\b(?:qty|quantity|x|nos\.?)\s*(\d+)\b', qty_line, re.IGNORECASE)
-            if qty_match:
-                qty = int(qty_match.group(1))
-            else:
-                standalone_ints = re.findall(r'\b(\d+)\b', qty_line)
-                if standalone_ints:
-                    qty = int(standalone_ints[0])
-                else:
-                    for j in range(idx - 1, -1, -1):
-                        prev_line = lines[j].strip()
-                        int_match = re.match(r'^\d+$', prev_line)
-                        if int_match:
-                            qty = int(int_match.group(0))
-                            break
-                        int_match2 = re.match(r'^(\d+)\b', prev_line)
-                        if int_match2:
-                            qty = int(int_match2.group(1))
-                            break
-            
             # Match prices mathematically (look at the same line first)
             unit_price = 0.0
             total_price = 0.0
             matched_pair = False
             
-            # Strip item list number at start of line (like "1. ", "01) ") to prevent false matches
-            clean_price_line = re.sub(r'^\s*\d+[\.\)]\s*', '', line)
+            # Clean price line numbers again with quantity excluded
+            clean_price_numbers = [v for v in line_numbers if v != float(qty)]
             
-            # Find all numbers on this line (both integer and decimal candidates)
-            line_numbers = []
-            for v in re.findall(r'\b\d+(?:\.\d+)?\b', clean_price_line):
-                try:
-                    val = float(v)
-                    # Don't treat standalone quantity integer as a price candidate if we already have qty
-                    if qty and val == float(qty) and len(line_numbers) == 0:
-                        continue
-                    line_numbers.append(val)
-                except ValueError:
-                    continue
-                    
-            # Try to match a pair (u, t) on the line where u * qty = t
-            for u in line_numbers:
-                for t in line_numbers:
+            for u in clean_price_numbers:
+                for t in clean_price_numbers:
                     if u == t and qty != 1:
                         continue
                     if abs(u * qty - t) < 0.05:
@@ -409,16 +434,17 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
                     
             if not matched_pair:
                 # If there are candidates left, select the largest as total_price
-                price_candidates = [v for v in line_numbers if v > 0]
+                price_candidates = [v for v in clean_price_numbers if v > 0]
                 if price_candidates:
                     total_price = max(price_candidates)
                     unit_price = total_price / qty if qty else total_price
                     matched_pair = True
                     
             if not matched_pair:
-                # Fall back to global decimals list
-                for u in decimals:
-                    for t in decimals:
+                # Fall back to global decimals list (filtering out years and HSN codes)
+                filtered_decimals = [d for d in decimals if not (2020 <= d <= 2099 or d >= 100000.0 or d == float(qty))]
+                for u in filtered_decimals:
+                    for t in filtered_decimals:
                         if u == t and qty != 1:
                             continue
                         if abs(u * qty - t) < 0.05:
@@ -428,7 +454,7 @@ def parse_extracted_text(text: str, doc_type: str) -> dict:
                             break
                     if matched_pair:
                         break
-                    
+                        
             medicines.append({
                 "medicine_name": clean_name,
                 "strength": strength,
@@ -517,13 +543,23 @@ def process_and_extract_document(file_path: str, doc_type: str) -> dict:
     """
     filename = os.path.basename(file_path).lower()
     
+    # Helper to write raw text to ocr.txt
+    def write_ocr_txt(text: str):
+        try:
+            with open("ocr.txt", "w", encoding="utf-8") as f:
+                f.write(text)
+        except Exception as e:
+            print(f"[OCR] Error writing ocr.txt: {e}")
+
     # 1. Match filenames to demo keys for mock validation
     if "success" in filename or "sample1" in filename:
         mock_key = "claim_success"
         data = MOCK_OCR_DATA[mock_key][doc_type]
+        raw_text = f"MOCK EXTRACTED TEXT FOR DEMO {mock_key.upper()} - {doc_type.upper()}"
+        write_ocr_txt(raw_text)
         return {
             "status": "Success",
-            "raw_text": f"MOCK EXTRACTED TEXT FOR DEMO {mock_key.upper()} - {doc_type.upper()}",
+            "raw_text": raw_text,
             "confidence_metrics": json.dumps({"overall_confidence": 98.5, "fields": {m["medicine_name"]: 99.0 for m in data["medicines"]}}),
             "parsed_data": data
         }
@@ -531,18 +567,25 @@ def process_and_extract_document(file_path: str, doc_type: str) -> dict:
     if "warning" in filename or "sample2" in filename:
         mock_key = "claim_warning"
         data = MOCK_OCR_DATA[mock_key][doc_type]
+        raw_text = f"MOCK EXTRACTED TEXT FOR DEMO {mock_key.upper()} - {doc_type.upper()}"
+        write_ocr_txt(raw_text)
         return {
             "status": "Success",
-            "raw_text": f"MOCK EXTRACTED TEXT FOR DEMO {mock_key.upper()} - {doc_type.upper()}",
+            "raw_text": raw_text,
             "confidence_metrics": json.dumps({"overall_confidence": 92.1, "fields": {m["medicine_name"]: 94.0 for m in data["medicines"]}}),
             "parsed_data": data
         }
         
-    # 2. Try fast plain OCR extraction first (Native Swift OCR or pdfplumber)
-    raw_text = run_swift_ocr(file_path)
-    if not raw_text and filename.endswith(".pdf"):
+    # 2. Try fast plain OCR extraction first (pdfplumber for PDFs first, then Swift OCR as fallback)
+    raw_text = ""
+    if filename.endswith(".pdf"):
         raw_text = extract_text_from_pdf(file_path)
+    if not raw_text:
+        raw_text = run_swift_ocr(file_path)
         
+    # Write raw text to ocr.txt
+    write_ocr_txt(raw_text or "[No text could be extracted from this document.]")
+
     parsed_data = None
     if raw_text:
         parsed_data = parse_extracted_text(raw_text, doc_type)
@@ -561,6 +604,8 @@ def process_and_extract_document(file_path: str, doc_type: str) -> dict:
         from app.gemma_ocr import extract_with_gemma
         gemma_result = extract_with_gemma(file_path, doc_type)
         if gemma_result and gemma_result["parsed_data"]["medicines"]:
+            # Write Gemma OCR text if it was used successfully
+            write_ocr_txt(gemma_result.get("raw_text", ""))
             return gemma_result
     except Exception as e:
         print(f"[OCR] Gemma extraction skipped: {e}")
