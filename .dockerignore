@@ -1,0 +1,18 @@
+.git
+.gitignore
+.vscode
+.agents
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.DS_Store
+
+# Never bake the local database or uploaded bills into the image — they belong
+# on the mounted volume.
+backend/app/data/*.db
+backend/app/data/uploads/*
+!backend/app/data/uploads/.gitkeep
+
+# macOS-only Apple Vision helper (Mach-O arm64); unusable in a Linux container.
+backend/app/ocr_helper

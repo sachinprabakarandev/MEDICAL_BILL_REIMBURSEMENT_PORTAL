@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: iocl-mediclaim
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # a persistent disk requires a paid instance type
+    healthCheckPath: /
+    envVars:
+      # Generated once by Render and kept stable across deploys. Without this
+      # the app falls back to the public default in auth.py and anyone can
+      # forge an admin JWT.
+      - key: IOCL_JWT_SECRET
+        generateValue: true
+    disk:
+      name: mediclaim-data
+      # Must match the data directory database.py resolves to, or the SQLite
+      # DB and every uploaded bill are wiped on each redeploy.
+      mountPath: /app/backend/app/data
+      sizeGB: 1
