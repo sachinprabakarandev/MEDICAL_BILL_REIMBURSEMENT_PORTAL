@@ -1,8 +1,11 @@
 import os
 import shutil
+import asyncio
+import logging
 from typing import Optional
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Form, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -16,7 +19,41 @@ from app.intelligence import match_prescription_and_bill
 from app.rules import evaluate_rules
 from app.reports import generate_csv_report, generate_excel_report, generate_pdf_report
 
-app = FastAPI(title="IOCL Medical Claim Validation System")
+logger = logging.getLogger("uvicorn.error")
+
+# --------------- Keep-alive self-ping (prevents Render free-tier spin-down) ---------------
+KEEP_ALIVE_INTERVAL = int(os.environ.get("KEEP_ALIVE_INTERVAL", "600"))  # seconds, default 10 min
+
+async def _keep_alive_task():
+    """Periodically pings the app's own health-check endpoint so Render
+    does not spin down the free-tier instance after 15 min of inactivity."""
+    import httpx
+    # Determine our own public URL from the RENDER_EXTERNAL_URL env var that
+    # Render injects, or fall back to localhost for local dev.
+    base = os.environ.get("RENDER_EXTERNAL_URL", f"http://0.0.0.0:{os.environ.get('PORT', '8000')}")
+    url = f"{base}/healthz"
+    logger.info("Keep-alive task started — pinging %s every %s s", url, KEEP_ALIVE_INTERVAL)
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+            try:
+                r = await client.get(url)
+                logger.debug("Keep-alive ping: %s %s", r.status_code, url)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Keep-alive ping failed: %s", exc)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup / shutdown lifecycle."""
+    task = asyncio.create_task(_keep_alive_task())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+app = FastAPI(title="IOCL Medical Claim Validation System", lifespan=lifespan)
 
 # Setup folder paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -27,14 +64,29 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=os.path.abspath(os.path.join(BASE_DIR, "..", "..", "frontend", "static"))), name="static")
 templates = Jinja2Templates(directory=os.path.abspath(os.path.join(BASE_DIR, "..", "..", "frontend", "templates")))
 
+# ---------- Lightweight health-check (no DB, no auth) ----------
+@app.get("/healthz")
+def healthz():
+    """Render pings this to verify the service is alive. No DB or auth
+    overhead so it responds instantly even during cold starts."""
+    return JSONResponse({"status": "ok"})
+
 # Middleware or utility to inject current user into template context
 @app.middleware("http")
 async def add_current_user_to_request(request: Request, call_next):
-    # This runs for every request
+    # Skip DB lookup for health-check and static-file requests
+    if request.url.path in ("/healthz",) or request.url.path.startswith("/static"):
+        request.state.user = None
+        return await call_next(request)
+
     db = SessionLocal()
     try:
         user = get_current_user(request, db)
         request.state.user = user
+    except Exception:
+        # During cold start the DB may not be ready yet — default to
+        # unauthenticated rather than crashing the request.
+        request.state.user = None
     finally:
         db.close()
     response = await call_next(request)

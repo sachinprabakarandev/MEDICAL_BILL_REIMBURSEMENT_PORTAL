@@ -4,7 +4,7 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: starter          # a persistent disk requires a paid instance type
-    healthCheckPath: /
+    healthCheckPath: /healthz
     envVars:
       # Generated once by Render and kept stable across deploys. Without this
       # the app falls back to the public default in auth.py and anyone can
